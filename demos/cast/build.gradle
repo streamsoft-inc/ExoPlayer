@@ -44,6 +44,16 @@ android {
         disable 'MissingTranslation'
     }
 
+    flavorDimensions "extensions"
+
+    productFlavors {
+        noExtensions {
+            dimension "extensions"
+        }
+        withExtensions {
+            dimension "extensions"
+        }
+    }
 }
 
 dependencies {
@@ -56,4 +66,13 @@ dependencies {
     implementation 'com.android.support:support-v4:' + supportLibraryVersion
     implementation 'com.android.support:appcompat-v7:' + supportLibraryVersion
     implementation 'com.android.support:recyclerview-v7:' + supportLibraryVersion
+    withExtensionsImplementation project(path: modulePrefix + 'extension-ffmpeg')
+    withExtensionsImplementation project(path: modulePrefix + 'extension-mpegh')
+    withExtensionsImplementation project(path: modulePrefix + 'extension-flac')
+    withExtensionsImplementation project(path: modulePrefix + 'extension-ima')
+    withExtensionsImplementation project(path: modulePrefix + 'extension-opus')
+    withExtensionsImplementation project(path: modulePrefix + 'extension-vp9')
+    withExtensionsImplementation project(path: modulePrefix + 'extension-rtmp')
+    implementation project(path: ':extension-ffmpeg')
+    implementation project(path: ':extension-mpegh')
 }

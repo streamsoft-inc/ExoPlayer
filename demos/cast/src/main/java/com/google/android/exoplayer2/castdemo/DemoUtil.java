@@ -77,6 +77,8 @@ import java.util.List;
     ArrayList<Sample> samples = new ArrayList<>();
     samples.add(new Sample("https://storage.googleapis.com/wvmedia/clear/h264/tears/tears.mpd",
         "DASH (clear,MP4,H264)", MIME_TYPE_DASH));
+    samples.add(new Sample("http://192.168.53.226:8887/contents/We_Are_SxSW_LV1_20180416/We_Are_SxSW_LV1_20180416_dash.mpd",
+            "DASH (We Are SxSW,MP4,MPEG-H 3D)", MIME_TYPE_DASH));
     samples.add(new Sample("https://commondatastorage.googleapis.com/gtv-videos-bucket/CastVideos/"
         + "hls/TearsOfSteel.m3u8", "Tears of Steel (HLS)", MIME_TYPE_HLS));
     samples.add(new Sample("https://html5demos.com/assets/dizzy.mp4", "Dizzy (MP4)",
