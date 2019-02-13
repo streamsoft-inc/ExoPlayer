@@ -30,6 +30,7 @@ include modulePrefix + 'extension-flac'
 include modulePrefix + 'extension-gvr'
 include modulePrefix + 'extension-ima'
 include modulePrefix + 'extension-cast'
+include modulePrefix + 'extension-cronet'
 include modulePrefix + 'extension-mediasession'
 include modulePrefix + 'extension-okhttp'
 include modulePrefix + 'extension-opus'
@@ -53,6 +54,7 @@ project(modulePrefix + 'extension-flac').projectDir = new File(rootDir, 'extensi
 project(modulePrefix + 'extension-gvr').projectDir = new File(rootDir, 'extensions/gvr')
 project(modulePrefix + 'extension-ima').projectDir = new File(rootDir, 'extensions/ima')
 project(modulePrefix + 'extension-cast').projectDir = new File(rootDir, 'extensions/cast')
+project(modulePrefix + 'extension-cronet').projectDir = new File(rootDir, 'extensions/cronet')
 project(modulePrefix + 'extension-mediasession').projectDir = new File(rootDir, 'extensions/mediasession')
 project(modulePrefix + 'extension-okhttp').projectDir = new File(rootDir, 'extensions/okhttp')
 project(modulePrefix + 'extension-opus').projectDir = new File(rootDir, 'extensions/opus')
@@ -63,8 +65,3 @@ project(modulePrefix + 'extension-jobdispatcher').projectDir = new File(rootDir,
 project(modulePrefix + 'extension-mpegh').projectDir = new File(rootDir, 'extensions/mpegh')
 project(modulePrefix + 'extension-virtualizer').projectDir = new File(rootDir, 'extensions/virtualizer')
 
-if (gradle.ext.has('exoplayerIncludeCronetExtension')
-        && gradle.ext.exoplayerIncludeCronetExtension) {
-    include modulePrefix + 'extension-cronet'
-    project(modulePrefix + 'extension-cronet').projectDir = new File(rootDir, 'extensions/cronet')
-}

@@ -37,8 +37,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 
@@ -49,6 +47,7 @@ import org.robolectric.RuntimeEnvironment;
 public class SimpleCacheTest {
 
   private static final String KEY_1 = "key1";
+  private static final String KEY_2 = "key2";
 
   private File cacheDir;
 
@@ -152,6 +151,40 @@ public class SimpleCacheTest {
     // read data back
     CacheSpan cacheSpan2 = simpleCache.startReadWrite(KEY_1, 0);
     assertCachedDataReadCorrect(cacheSpan2);
+  }
+
+  @Test
+  public void testReloadCacheWithoutRelease() throws Exception {
+    SimpleCache simpleCache = getSimpleCache();
+
+    // Write data for KEY_1.
+    CacheSpan cacheSpan1 = simpleCache.startReadWrite(KEY_1, 0);
+    addCache(simpleCache, KEY_1, 0, 15);
+    simpleCache.releaseHoleSpan(cacheSpan1);
+    // Write and remove data for KEY_2.
+    CacheSpan cacheSpan2 = simpleCache.startReadWrite(KEY_2, 0);
+    addCache(simpleCache, KEY_2, 0, 15);
+    simpleCache.releaseHoleSpan(cacheSpan2);
+    simpleCache.removeSpan(simpleCache.getCachedSpans(KEY_2).first());
+
+    // Don't release the cache. This means the index file wont have been written to disk after the
+    // data for KEY_2 was removed. Move the cache instead, so we can reload it without failing the
+    // folder locking check.
+    File cacheDir2 = Util.createTempFile(RuntimeEnvironment.application, "ExoPlayerTest");
+    cacheDir2.delete();
+    cacheDir.renameTo(cacheDir2);
+
+    // Reload the cache from its new location.
+    simpleCache = new SimpleCache(cacheDir2, new NoOpCacheEvictor());
+
+    // Read data back for KEY_1.
+    CacheSpan cacheSpan3 = simpleCache.startReadWrite(KEY_1, 0);
+    assertCachedDataReadCorrect(cacheSpan3);
+
+    // Check the entry for KEY_2 was removed when the cache was reloaded.
+    assertThat(simpleCache.getCachedSpans(KEY_2)).isEmpty();
+
+    Util.recursiveDelete(cacheDir2);
   }
 
   @Test
@@ -259,12 +292,12 @@ public class SimpleCacheTest {
     addCache(simpleCache, KEY_1, 0, 15);
 
     // Make index.store() throw exception from now on.
-    doAnswer(new Answer<Object>() {
-      @Override
-      public Object answer(InvocationOnMock invocation) throws Throwable {
-        throw new Cache.CacheException("SimpleCacheTest");
-      }
-    }).when(index).store();
+    doAnswer(
+            invocation -> {
+              throw new CacheException("SimpleCacheTest");
+            })
+        .when(index)
+        .store();
 
     // Adding more content will make LeastRecentlyUsedCacheEvictor evict previous content.
     try {

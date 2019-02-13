@@ -75,7 +75,7 @@ public class HlsMasterPlaylistParserTest {
 
   private static final String PLAYLIST_WITH_CC =
       " #EXTM3U \n"
-          + "#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,"
+          + "#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID=\"cc1\","
           + "LANGUAGE=\"es\",NAME=\"Eng\",INSTREAM-ID=\"SERVICE4\"\n"
           + "#EXT-X-STREAM-INF:BANDWIDTH=1280000,"
           + "CODECS=\"mp4a.40.2,avc1.66.30\",RESOLUTION=304x128\n"
@@ -88,6 +88,14 @@ public class HlsMasterPlaylistParserTest {
           + "#EXT-X-STREAM-INF:BANDWIDTH=1280000,"
           + "CODECS=\"mp4a.40.2,avc1.66.30\",RESOLUTION=304x128,"
           + "CLOSED-CAPTIONS=NONE\n"
+          + "http://example.com/low.m3u8\n";
+
+  private static final String PLAYLIST_WITH_SUBTITLES =
+      " #EXTM3U \n"
+          + "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"sub1\","
+          + "LANGUAGE=\"es\",NAME=\"Eng\"\n"
+          + "#EXT-X-STREAM-INF:BANDWIDTH=1280000,"
+          + "CODECS=\"mp4a.40.2,avc1.66.30\",RESOLUTION=304x128\n"
           + "http://example.com/low.m3u8\n";
 
   private static final String PLAYLIST_WITH_AUDIO_MEDIA_TAG =
@@ -104,6 +112,38 @@ public class HlsMasterPlaylistParserTest {
           + "AUTOSELECT=YES,DEFAULT=YES,CHANNELS=\"2\",URI=\"a1/prog_index.m3u8\"\n"
           + "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud2\",LANGUAGE=\"en\",NAME=\"English\","
           + "AUTOSELECT=YES,DEFAULT=YES,CHANNELS=\"6\",URI=\"a2/prog_index.m3u8\"\n";
+
+  private static final String PLAYLIST_WITH_INDEPENDENT_SEGMENTS =
+      " #EXTM3U\n"
+          + "\n"
+          + "#EXT-X-INDEPENDENT-SEGMENTS\n"
+          + "\n"
+          + "#EXT-X-STREAM-INF:BANDWIDTH=1280000,"
+          + "CODECS=\"mp4a.40.2,avc1.66.30\",RESOLUTION=304x128\n"
+          + "http://example.com/low.m3u8\n"
+          + "\n"
+          + "#EXT-X-STREAM-INF:BANDWIDTH=1280000,CODECS=\"mp4a.40.2 , avc1.66.30 \"\n"
+          + "http://example.com/spaces_in_codecs.m3u8\n";
+
+  private static final String PLAYLIST_WITH_VARIABLE_SUBSTITUTION =
+      " #EXTM3U \n"
+          + "\n"
+          + "#EXT-X-DEFINE:NAME=\"codecs\",VALUE=\"mp4a.40.5\"\n"
+          + "#EXT-X-DEFINE:NAME=\"tricky\",VALUE=\"This/{$nested}/reference/shouldnt/work\"\n"
+          + "#EXT-X-DEFINE:NAME=\"nested\",VALUE=\"This should not be inserted\"\n"
+          + "#EXT-X-STREAM-INF:BANDWIDTH=65000,CODECS=\"{$codecs}\"\n"
+          + "http://example.com/{$tricky}\n";
+
+  private static final String PLAYLIST_WITH_MULTIPLE_MUXED_MEDIA_TAGS =
+      "#EXTM3U\n"
+          + "#EXT-X-VERSION:3\n"
+          + "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"audio_0\",DEFAULT=YES,URI=\"0/0.m3u8\"\n"
+          + "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"b\",NAME=\"audio_0\",DEFAULT=YES,URI=\"1/1.m3u8\"\n"
+          + "#EXT-X-STREAM-INF:BANDWIDTH=140800,CODECS=\"mp4a.40.2\",AUDIO=\"a\"\n"
+          + "0/0.m3u8\n"
+          + "\n"
+          + "#EXT-X-STREAM-INF:BANDWIDTH=281600,CODECS=\"mp4a.40.2\",AUDIO=\"b\"\n"
+          + "1/1.m3u8\n";
 
   @Test
   public void testParseMasterPlaylist() throws IOException {
@@ -193,6 +233,61 @@ public class HlsMasterPlaylistParserTest {
     Format secondAudioFormat = playlist.audios.get(1).format;
     assertThat(secondAudioFormat.codecs).isEqualTo("ac-3");
     assertThat(secondAudioFormat.sampleMimeType).isEqualTo(MimeTypes.AUDIO_AC3);
+  }
+
+  @Test
+  public void testAudioIdPropagation() throws IOException {
+    HlsMasterPlaylist playlist = parseMasterPlaylist(PLAYLIST_URI, PLAYLIST_WITH_AUDIO_MEDIA_TAG);
+
+    Format firstAudioFormat = playlist.audios.get(0).format;
+    assertThat(firstAudioFormat.id).isEqualTo("aud1:English");
+
+    Format secondAudioFormat = playlist.audios.get(1).format;
+    assertThat(secondAudioFormat.id).isEqualTo("aud2:English");
+  }
+
+  @Test
+  public void testCCIdPropagation() throws IOException {
+    HlsMasterPlaylist playlist = parseMasterPlaylist(PLAYLIST_URI, PLAYLIST_WITH_CC);
+
+    Format firstTextFormat = playlist.muxedCaptionFormats.get(0);
+    assertThat(firstTextFormat.id).isEqualTo("cc1:Eng");
+  }
+
+  @Test
+  public void testSubtitleIdPropagation() throws IOException {
+    HlsMasterPlaylist playlist = parseMasterPlaylist(PLAYLIST_URI, PLAYLIST_WITH_SUBTITLES);
+
+    Format firstTextFormat = playlist.subtitles.get(0).format;
+    assertThat(firstTextFormat.id).isEqualTo("sub1:Eng");
+  }
+
+  @Test
+  public void testIndependentSegments() throws IOException {
+    HlsMasterPlaylist playlistWithIndependentSegments =
+        parseMasterPlaylist(PLAYLIST_URI, PLAYLIST_WITH_INDEPENDENT_SEGMENTS);
+    assertThat(playlistWithIndependentSegments.hasIndependentSegments).isTrue();
+
+    HlsMasterPlaylist playlistWithoutIndependentSegments =
+        parseMasterPlaylist(PLAYLIST_URI, PLAYLIST_SIMPLE);
+    assertThat(playlistWithoutIndependentSegments.hasIndependentSegments).isFalse();
+  }
+
+  @Test
+  public void testVariableSubstitution() throws IOException {
+    HlsMasterPlaylist playlistWithSubstitutions =
+        parseMasterPlaylist(PLAYLIST_URI, PLAYLIST_WITH_VARIABLE_SUBSTITUTION);
+    HlsMasterPlaylist.HlsUrl variant = playlistWithSubstitutions.variants.get(0);
+    assertThat(variant.format.codecs).isEqualTo("mp4a.40.5");
+    assertThat(variant.url).isEqualTo("http://example.com/This/{$nested}/reference/shouldnt/work");
+  }
+
+  @Test
+  public void testMultipleMuxedMediaTags() throws IOException {
+    HlsMasterPlaylist playlistWithMultipleMuxedMediaTags =
+        parseMasterPlaylist(PLAYLIST_URI, PLAYLIST_WITH_MULTIPLE_MUXED_MEDIA_TAGS);
+    assertThat(playlistWithMultipleMuxedMediaTags.variants).hasSize(2);
+    assertThat(playlistWithMultipleMuxedMediaTags.audios).isEmpty();
   }
 
   private static HlsMasterPlaylist parseMasterPlaylist(String uri, String playlistString)

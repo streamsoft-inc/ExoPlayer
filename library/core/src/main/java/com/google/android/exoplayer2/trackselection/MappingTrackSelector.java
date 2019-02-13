@@ -26,9 +26,11 @@ import com.google.android.exoplayer2.RendererConfiguration;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.util.Util;
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Arrays;
+import org.checkerframework.checker.nullness.compatqual.NullableType;
 
 /**
  * Base class for {@link TrackSelector}s that first establish a mapping between {@link TrackGroup}s
@@ -42,7 +44,12 @@ public abstract class MappingTrackSelector extends TrackSelector {
    */
   public static final class MappedTrackInfo {
 
-    /** Levels of renderer support. Higher numerical values indicate higher levels of support. */
+    /**
+     * Levels of renderer support. Higher numerical values indicate higher levels of support. One of
+     * {@link #RENDERER_SUPPORT_NO_TRACKS}, {@link #RENDERER_SUPPORT_UNSUPPORTED_TRACKS}, {@link
+     * #RENDERER_SUPPORT_EXCEEDS_CAPABILITIES_TRACKS} or {@link #RENDERER_SUPPORT_PLAYABLE_TRACKS}.
+     */
+    @Documented
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({
       RENDERER_SUPPORT_NO_TRACKS,
@@ -94,6 +101,7 @@ public abstract class MappingTrackSelector extends TrackSelector {
      *     each mapped track, indexed by renderer, track group and track (in that order).
      * @param unmappedTrackGroups {@link TrackGroup}s not mapped to any renderer.
      */
+    @SuppressWarnings("deprecation")
     /* package */ MappedTrackInfo(
         int[] rendererTrackTypes,
         TrackGroupArray[] rendererTrackGroups,
@@ -382,7 +390,7 @@ public abstract class MappingTrackSelector extends TrackSelector {
             rendererFormatSupports,
             unmappedTrackGroupArray);
 
-    Pair<RendererConfiguration[], TrackSelection[]> result =
+    Pair<@NullableType RendererConfiguration[], @NullableType TrackSelection[]> result =
         selectTracks(
             mappedTrackInfo, rendererFormatSupports, rendererMixedMimeTypeAdaptationSupports);
     return new TrackSelectorResult(result.first, result.second, mappedTrackInfo);
@@ -402,7 +410,7 @@ public abstract class MappingTrackSelector extends TrackSelector {
    *     RendererCapabilities#getTrackType()} is {@link C#TRACK_TYPE_NONE}.
    * @throws ExoPlaybackException If an error occurs while selecting the tracks.
    */
-  protected abstract Pair<RendererConfiguration[], TrackSelection[]>
+  protected abstract Pair<@NullableType RendererConfiguration[], @NullableType TrackSelection[]>
       selectTracks(
           MappedTrackInfo mappedTrackInfo,
           int[][][] rendererFormatSupports,
