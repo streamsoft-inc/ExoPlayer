@@ -75,10 +75,10 @@ public class DemoApplication extends Application {
   }
 
   /** Returns a {@link HttpDataSource.Factory}. */
-  public HttpDataSource.Factory buildHttpDataSourceFactory(
-      TransferListener<? super DataSource> listener) {
-    return new DefaultHttpDataSourceFactory(userAgent, listener);
+  public HttpDataSource.Factory buildHttpDataSourceFactory() {
+    return new DefaultHttpDataSourceFactory(userAgent);
   }
+
 
   /** Returns whether extension renderers should be used. */
   public boolean useExtensionRenderers() {

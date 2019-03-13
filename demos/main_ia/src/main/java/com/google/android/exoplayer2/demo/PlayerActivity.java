@@ -61,14 +61,12 @@ import com.google.android.exoplayer2.source.ads.AdsMediaSource;
 import com.google.android.exoplayer2.source.dash.DashMediaSource;
 import com.google.android.exoplayer2.source.dash.DefaultDashChunkSource;
 import com.google.android.exoplayer2.source.dash.manifest.DashManifestParser;
-import com.google.android.exoplayer2.source.dash.manifest.RepresentationKey;
 import com.google.android.exoplayer2.source.hls.HlsMediaSource;
+import com.google.android.exoplayer2.source.hls.playlist.DefaultHlsPlaylistParserFactory;
 import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylistParser;
-import com.google.android.exoplayer2.source.hls.playlist.RenditionKey;
 import com.google.android.exoplayer2.source.smoothstreaming.DefaultSsChunkSource;
 import com.google.android.exoplayer2.source.smoothstreaming.SsMediaSource;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifestParser;
-import com.google.android.exoplayer2.source.smoothstreaming.manifest.StreamKey;
 import com.google.android.exoplayer2.trackselection.AdaptiveTrackSelection;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.MappingTrackSelector.MappedTrackInfo;
@@ -85,6 +83,7 @@ import com.google.android.exoplayer2.upstream.HttpDataSource;
 import com.google.android.exoplayer2.util.ErrorMessageProvider;
 import com.google.android.exoplayer2.util.EventLogger;
 import com.google.android.exoplayer2.util.Util;
+import com.google.android.exoplayer2.offline.StreamKey;
 
 import java.lang.reflect.Constructor;
 import java.net.CookieHandler;
@@ -446,27 +445,21 @@ public class PlayerActivity extends Activity
     @ContentType int type = Util.inferContentType(uri, overrideExtension);
     switch (type) {
       case C.TYPE_DASH:
-        return new DashMediaSource.Factory(
-                new DefaultDashChunkSource.Factory(mediaDataSourceFactory),
-                buildDataSourceFactory(false))
-            .setManifestParser(
-                new FilteringManifestParser<>(
-                    new DashManifestParser(), (List<RepresentationKey>) getOfflineStreamKeys(uri)))
-            .createMediaSource(uri);
+        return new DashMediaSource.Factory(mediaDataSourceFactory)
+                .setManifestParser(
+                        new FilteringManifestParser<>(new DashManifestParser(), getOfflineStreamKeys(uri)))
+                .createMediaSource(uri);
       case C.TYPE_SS:
-        return new SsMediaSource.Factory(
-                new DefaultSsChunkSource.Factory(mediaDataSourceFactory),
-                buildDataSourceFactory(false))
-            .setManifestParser(
-                new FilteringManifestParser<>(
-                    new SsManifestParser(), (List<StreamKey>) getOfflineStreamKeys(uri)))
-            .createMediaSource(uri);
+        return new SsMediaSource.Factory(mediaDataSourceFactory)
+                .setManifestParser(
+                        new FilteringManifestParser<>(new SsManifestParser(), getOfflineStreamKeys(uri)))
+                .createMediaSource(uri);
       case C.TYPE_HLS:
         return new HlsMediaSource.Factory(mediaDataSourceFactory)
-            .setPlaylistParser(
-                new FilteringManifestParser<>(
-                    new HlsPlaylistParser(), (List<RenditionKey>) getOfflineStreamKeys(uri)))
-            .createMediaSource(uri);
+                .setPlaylistParserFactory(
+                        new DefaultHlsPlaylistParserFactory(getOfflineStreamKeys(uri)))
+                .createMediaSource(uri);
+
       case C.TYPE_OTHER:
 
         return new ExtractorMediaSource.Factory(mediaDataSourceFactory)
@@ -478,7 +471,7 @@ public class PlayerActivity extends Activity
     }
   }
 
-  private List<?> getOfflineStreamKeys(Uri uri) {
+  private List<StreamKey> getOfflineStreamKeys(Uri uri) {
     return ((DemoApplication) getApplication()).getDownloadTracker().getOfflineStreamKeys(uri);
   }
 

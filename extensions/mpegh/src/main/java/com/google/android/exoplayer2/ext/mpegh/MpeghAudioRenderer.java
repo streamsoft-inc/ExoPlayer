@@ -126,7 +126,7 @@ public final class MpeghAudioRenderer extends SimpleDecoderAudioRenderer {
   }
 
   private boolean shouldUseFloatOutput(Format inputFormat) {
-    if (!supportsOutputEncoding(C.ENCODING_PCM_FLOAT)) {
+    if (!supportsOutput(2, C.ENCODING_PCM_FLOAT)) {
       return false;
     }
     // For all other formats, assume that it's worth using 32-bit float encoding.
