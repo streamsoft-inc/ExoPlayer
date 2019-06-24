@@ -26,6 +26,7 @@ import com.google.android.exoplayer2.audio.DefaultAudioSink;
 import com.google.android.exoplayer2.audio.SimpleDecoderAudioRenderer;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
+import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
 
 //--------------------------------------------------------------------//
@@ -58,7 +59,7 @@ public final class MpeghAudioRenderer extends SimpleDecoderAudioRenderer {
    * @param eventHandler A handler to use when delivering events to {@code eventListener}. May be
    *     null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
-   * @param appRootPath A file path of application root (Context.getFilesDir().getAbsolutePath()).
+   * @param appRootPath A file path of application root (Context.getFilesDir().getParent()).
    * @param audioProcessors Optional {@link AudioProcessor}s that will process audio before output.
    */
   public MpeghAudioRenderer(Handler eventHandler, AudioRendererEventListener eventListener,
@@ -70,7 +71,7 @@ public final class MpeghAudioRenderer extends SimpleDecoderAudioRenderer {
    * @param eventHandler A handler to use when delivering events to {@code eventListener}. May be
    *     null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
-   * @param appRootPath A file path of application root (Context.getFilesDir().getAbsolutePath()).
+   * @param appRootPath A file path of application root (Context.getFilesDir().getParent()).
    * @param audioSink The sink to which audio will be output.
    */
   public MpeghAudioRenderer(Handler eventHandler, AudioRendererEventListener eventListener,
@@ -122,15 +123,26 @@ public final class MpeghAudioRenderer extends SimpleDecoderAudioRenderer {
   }
 
   private boolean isOutputSupported(Format inputFormat) {
-    return shouldUseFloatOutput(inputFormat);
+    return shouldUseFloatOutput(inputFormat)
+            || supportsOutput(inputFormat.channelCount, C.ENCODING_PCM_16BIT);
   }
 
   private boolean shouldUseFloatOutput(Format inputFormat) {
-    if (!supportsOutput(2, C.ENCODING_PCM_FLOAT)) {
-      return false;
+    Assertions.checkNotNull(inputFormat.sampleMimeType);
+    switch (inputFormat.sampleMimeType) {
+      case MimeTypes.AUDIO_RAW:
+        // For raw audio, output in 32-bit float encoding if the bit depth is > 16-bit.
+        return inputFormat.pcmEncoding == C.ENCODING_PCM_24BIT
+                || inputFormat.pcmEncoding == C.ENCODING_PCM_32BIT
+                || inputFormat.pcmEncoding == C.ENCODING_PCM_FLOAT;
+      case MimeTypes.AUDIO_AC3:
+        // AC-3 is always 16-bit, so there is no point outputting in 32-bit float encoding.
+        return false;
+      default:
+        // For all other formats, assume that it's worth using 32-bit float encoding.
+        return true;
     }
-    // For all other formats, assume that it's worth using 32-bit float encoding.
-    return true;
   }
+
 
 }

@@ -84,7 +84,6 @@ DECODER_FUNC(jlong, MpeghInitialize, jbyteArray extraData,
     jsize config_size = env->GetArrayLength(extraData);
     jbyte *config = env->GetByteArrayElements(extraData, 0);
 
-    LOGI("Decoder 1");
     // mpehg decoder initialize
     MpeghDecoder* decoder = new MpeghDecoder(std::string(root),
                                              std::string(hrtf),
@@ -131,7 +130,7 @@ DECODER_FUNC(jint, MpeghDecode, jlong jHandle, jobject inputData,
     bool ret = decoder->Decode(inputBuffer,
                                inputSize,
                                outputBuffer);
-    if (ret == false) return 0;
+    if (ret == false) return -1;
 
     return OUTPUT_SIZE;
 }

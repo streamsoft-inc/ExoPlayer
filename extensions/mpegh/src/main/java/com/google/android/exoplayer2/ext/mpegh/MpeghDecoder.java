@@ -15,7 +15,7 @@
  */
 package com.google.android.exoplayer2.ext.mpegh;
 
-import android.util.Log;
+import android.content.Context;
 
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
@@ -25,6 +25,7 @@ import com.google.android.exoplayer2.util.MimeTypes;
 
 import java.nio.ByteBuffer;
 import java.util.List;
+import android.util.Log;
 
 //--------------------------------------------------------------------//
 // IA decoder impl
@@ -54,7 +55,6 @@ import java.util.List;
                       String mimeType, String appRootPath, List<byte[]> initializationData)
       throws MpeghDecoderException {
     super(new DecoderInputBuffer[numInputBuffers], new SimpleOutputBuffer[numOutputBuffers]);
-
     if (!MpeghLibrary.isAvailable()) {
       throw new MpeghDecoderException("Failed to load decoder native libraries.");
     }

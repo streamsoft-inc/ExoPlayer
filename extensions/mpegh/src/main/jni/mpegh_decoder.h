@@ -7,7 +7,7 @@
 #include "libSonyIA_mobile.h"
 #include "alc.h"
 
-static const int AMPLIFY_GAIN_DB      = 2;
+static const int AMPLIFY_GAIN_DB      = 3;
 static const int NUMBER_OF_CHANNELS   = 2;
 static const int SUPPORT_FREQUENCY    = 48000;
 static const int SAMPLE_PER_FRAME     = 1024;
