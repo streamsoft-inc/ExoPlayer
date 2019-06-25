@@ -27,6 +27,7 @@
 #define SIA_ERR_TYPE_1           4
 #define SIA_ERR_TYPE_2           5
 #define SIA_ERR_TYPE_3           6
+#define SIA_ERR_TYPE_4           7
 
 typedef struct _sia_mha_struct_ *SIA_MHA_HANDLE;
 

@@ -15,7 +15,7 @@
  */
 package com.google.android.exoplayer2.ext.mpegh;
 
-import android.content.Context;
+import android.util.Log;
 
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
@@ -24,8 +24,8 @@ import com.google.android.exoplayer2.decoder.SimpleOutputBuffer;
 import com.google.android.exoplayer2.util.MimeTypes;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.List;
-import android.util.Log;
 
 //--------------------------------------------------------------------//
 // IA decoder impl
@@ -41,26 +41,42 @@ import android.util.Log;
   // Space for 32 ms of 48 kHz 2 channel 32-bit Float audio.
   private static final int OUTPUT_BUFFER_SIZE_SINGLE_PRECISION_FLOAT = 32 * 48 * 2 * 4;
 
+  // Error codes matching mpegh_jni.cc.
+  private static final int MPEGH_DECODER_ERROR_INVALID_DATA = -1;
+  private static final int MPEGH_DECODER_ERROR_OTHER = -2;
+
   private final String codecName;
   private final byte[] extraData;
   private final @C.Encoding int encoding;
   private final int outputBufferSize;
+  private final boolean isOutputFloat;
 
   private long nativeContext;
   private boolean hasOutputFormat;
   private volatile int channelCount;
   private volatile int sampleRate;
+  private ByteBuffer buffer;
 
-  public MpeghDecoder(int numInputBuffers, int numOutputBuffers, int initialInputBufferSize,
-                      String mimeType, String appRootPath, List<byte[]> initializationData)
+  public MpeghDecoder(int numInputBuffers,
+                      int numOutputBuffers,
+                      int initialInputBufferSize,
+                      String mimeType,
+                      String appRootPath,
+                      List<byte[]> initializationData,
+                      boolean isOutputFloat)
       throws MpeghDecoderException {
     super(new DecoderInputBuffer[numInputBuffers], new SimpleOutputBuffer[numOutputBuffers]);
     if (!MpeghLibrary.isAvailable()) {
       throw new MpeghDecoderException("Failed to load decoder native libraries.");
     }
+    this.isOutputFloat = isOutputFloat;
     codecName = MpeghLibrary.getCodecName(mimeType);
     extraData = getExtraData(mimeType, initializationData);
-    encoding = C.ENCODING_PCM_FLOAT;
+    if (isOutputFloat) {
+      encoding = C.ENCODING_PCM_FLOAT;
+    } else {
+      encoding = C.ENCODING_PCM_16BIT;
+    }
     outputBufferSize = OUTPUT_BUFFER_SIZE_SINGLE_PRECISION_FLOAT;
 
     // prepare decoder config file manager
@@ -104,27 +120,73 @@ import android.util.Log;
   @Override
   protected MpeghDecoderException decode(
       DecoderInputBuffer inputBuffer, SimpleOutputBuffer outputBuffer, boolean reset) {
+    ByteBuffer outputData = outputBuffer.init(inputBuffer.timeUs, outputBufferSize);
+    if (isOutputFloat) {
+      buffer = outputData;
+    } else {
+      if (buffer == null || buffer.capacity() < outputBufferSize) {
+        buffer = ByteBuffer.allocateDirect(outputBufferSize).order(ByteOrder.nativeOrder());
+      }
+      buffer.limit(outputBufferSize);
+      buffer.position(0);
+    }
+
     if (reset) {
       nativeContext = MpeghReset(nativeContext, extraData);
       if (nativeContext == 0) {
         return new MpeghDecoderException("Error resetting (see logcat).");
       }
     }
-    ByteBuffer inputData = inputBuffer.data;
-    int inputSize = inputData.limit();
-    ByteBuffer outputData = outputBuffer.init(inputBuffer.timeUs, outputBufferSize);
-    int result = MpeghDecode(nativeContext, inputData, inputSize, outputData, outputBufferSize);
-    if (result < 0) {
-      return new MpeghDecoderException("Error decoding (see logcat). Code: " + result);
-    }
     if (!hasOutputFormat) {
       channelCount = MpeghGetChannelCount(nativeContext);
       sampleRate = MpeghGetSampleRate(nativeContext);
       hasOutputFormat = true;
     }
+
+    ByteBuffer inputData = inputBuffer.data;
+    int inputSize = inputData.limit();
+    int result = MpeghDecode(nativeContext, inputData, inputSize, buffer, outputBufferSize,
+                             inputBuffer.isEndOfStream());
+    if (result == MPEGH_DECODER_ERROR_INVALID_DATA) {
+      outputBuffer.data.position(0);
+      outputBuffer.data.limit(0);
+      return null;
+    } else if (result < 0) { // includes result == MPEGH_DECODER_ERROR_OTHER
+      return new MpeghDecoderException("Error decoding (see logcat).");
+    }
+    buffer.limit(result);
+    buffer.position(0);
+
+    if (!isOutputFloat) {
+      boolean ret  = convertFromFloatToInt16(buffer, outputBuffer.data);
+      if (!ret) {
+        return new MpeghDecoderException("Error resetting (see logcat).");
+      }
+    }
     outputBuffer.data.position(0);
-    outputBuffer.data.limit(result);
     return null;
+  }
+
+  private boolean convertFromFloatToInt16(ByteBuffer inputBuffer, ByteBuffer outputBuffer) {
+    if (inputBuffer == null || outputBuffer == null ||
+            inputBuffer.remaining()/(Float.BYTES/Short.BYTES) >
+                    outputBuffer.capacity() - outputBuffer.position()) {
+      return false;
+    }
+
+    while(inputBuffer.hasRemaining()) {
+      float fsample = inputBuffer.getFloat();
+      short isample;
+      fsample = fsample * 0x8000;
+      fsample = Math.round(fsample);
+      if( fsample > 0x7999 ) fsample = 0x7999;
+      if( fsample < -0x8000 ) fsample = -0x8000;
+      isample = (short) fsample;
+      outputBuffer.putShort(isample);
+    }
+
+    outputBuffer.limit(outputBuffer.position());
+    return true;
   }
 
   @Override
@@ -170,10 +232,10 @@ import android.util.Log;
   }
 
   private native long MpeghInitialize(byte[] extraData, String rootPath, String fnameCoef1, String fnameCoef2);
-  private native int MpeghDecode(long context, ByteBuffer inputData, int inputSize,
-      ByteBuffer outputData, int outputSize);
-  private native int MpeghGetChannelCount(long context);
-  private native int MpeghGetSampleRate(long context);
+  private native int  MpeghDecode(long context, ByteBuffer inputData, int inputSize,
+                                  ByteBuffer outputBuffer, int outputBufferSize, boolean isEndOsStream);
+  private native int  MpeghGetChannelCount(long context);
+  private native int  MpeghGetSampleRate(long context);
   private native long MpeghReset(long context, byte[] extraData);
   private native void MpeghRelease(long context);
 
