@@ -73,7 +73,7 @@ public final class MpeghLibrary {
       return false;
     }
     String codecName = getCodecName(mimeType);
-    return codecName != null && codecName == "mpegh";
+    return codecName != null;
   }
 
   /**
@@ -81,8 +81,10 @@ public final class MpeghLibrary {
    */
   /* package */ static String getCodecName(String mimeType) {
     switch (mimeType) {
-      case MimeTypes.BASE_TYPE_AUDIO + "/mha1":
-        return "mpegh";
+      case MimeTypes.AUDIO_MPEGH_MHA1:
+        return "mpegh3d.mha1";
+      case MimeTypes.AUDIO_MPEGH_MHM1:
+        return "mpegh3d.mhm1";
       default:
         return null;
     }

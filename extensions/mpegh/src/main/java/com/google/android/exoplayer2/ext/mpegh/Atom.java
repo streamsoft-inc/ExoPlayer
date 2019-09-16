@@ -143,6 +143,7 @@ import java.util.List;
   public static final int TYPE_alac = Util.getIntegerCodeForString("alac");
   public static final int TYPE_mha1 = Util.getIntegerCodeForString("mha1");
   public static final int TYPE_mhac = Util.getIntegerCodeForString("mhaC");
+  public static final int TYPE_mhm1 = Util.getIntegerCodeForString("mhm1");
 
   public final int type;
 

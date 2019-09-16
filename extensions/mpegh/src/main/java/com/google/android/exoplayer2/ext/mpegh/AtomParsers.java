@@ -655,7 +655,7 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
           || childAtomType == Atom.TYPE_samr || childAtomType == Atom.TYPE_sawb
           || childAtomType == Atom.TYPE_lpcm || childAtomType == Atom.TYPE_sowt
           || childAtomType == Atom.TYPE__mp3 || childAtomType == Atom.TYPE_alac
-          || childAtomType == Atom.TYPE_mha1) {
+          || childAtomType == Atom.TYPE_mha1 || childAtomType == Atom.TYPE_mhm1) {
         parseAudioSampleEntry(stsd, childAtomType, childStartPosition, childAtomSize, trackId,
             language, isQuickTime, drmInitData, out, i);
       } else if (childAtomType == Atom.TYPE_TTML || childAtomType == Atom.TYPE_tx3g
@@ -940,6 +940,8 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
       mimeType = MimeTypes.AUDIO_ALAC;
     } else if (atomType == Atom.TYPE_mha1) {
       mimeType = MimeTypes.BASE_TYPE_AUDIO + "/mha1";
+    } else if (atomType == Atom.TYPE_mhm1) {
+      mimeType = MimeTypes.BASE_TYPE_AUDIO + "/mhm1";
     }
 
     byte[] initializationData = null;

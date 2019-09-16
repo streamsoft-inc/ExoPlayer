@@ -15,11 +15,12 @@
 
 namespace mpegh {
 
-static const int kAmplifyGainDb = 3;
+static const int kAmplifyGainDb = 1;
 static const int kNumberOfChannels = 2;
 static const int kSupportFrequency = 48000;
 static const int kSamplePerFrame = 1024;
 static const int kDecoderMultithreadDelay = 1; // delay = kDecoderMultithreadDelay * 1024 sample
+static const int kMhasFrameMaxSize = 19072;
 
 /**
  * Alc configuration
@@ -41,7 +42,8 @@ MpeghDecoder::MpeghDecoder(const std::string& root_path,
                            const std::string& config_path_hrtf,
                            const std::string& config_path_cp)
                            : is_initialized_(false)
-                           , is_opened_(false)
+                           , is_configured_(false)
+                           , is_codec_mha1_(false)
                            , multithread_delay_counter_(0) {
   LOGD("%s", __FUNCTION__);
   int work_size = alc_get_worksize();
@@ -97,8 +99,8 @@ bool MpeghDecoder::Initialize(const std::string& rootPath,
   return true;
 }
 
-bool MpeghDecoder::Open(size_t config_size, uint8_t *config) {
-  if (!is_initialized_ || is_opened_) return false;
+bool MpeghDecoder::Configure(size_t config_size, uint8_t *config) {
+  if (!is_initialized_ || is_configured_) return false;
 
   p_mhac_config_.reset(new uint8_t[config_size]);
   std::memcpy(static_cast<void*>(p_mhac_config_.get()),
@@ -134,12 +136,52 @@ bool MpeghDecoder::Open(size_t config_size, uint8_t *config) {
     return false;
   }
 
-  is_opened_ = true;
+  is_codec_mha1_ = true;
+  is_configured_ = true;
   return true;
 }
 
-bool MpeghDecoder::Close() {
-  if (!is_initialized_ || !is_opened_) return false;
+bool MpeghDecoder::ConfigureMhm1(uint8_t *inputBuffer, int inputSize){
+  if (!is_initialized_ || is_configured_) return false;
+
+  auto bsOpenBuffer = std::make_unique<uint8_t[]>(kMhasFrameMaxSize);
+  memset(bsOpenBuffer.get(), 0, kMhasFrameMaxSize * sizeof(uint8_t));
+  memcpy(bsOpenBuffer.get(), inputBuffer, inputSize * sizeof(uint8_t));
+  int ret = sia_mha_bsOpen(p_context_.get(),
+                           bsOpenBuffer.get(),
+                           kMhasFrameMaxSize);
+  bsOpenBuffer.release();
+  LOGD("%s::sia_mha_bsOpen(cxt:%p, buffer:%p, size:%d)",
+       __FUNCTION__, p_context_.get(), inputBuffer,
+       inputSize);
+  if (ret) {
+    LOGE("sia_mha_bsOpen failed ret:%d", ret);
+    if (ret >= SIA_ERR_TYPE_1) {
+      PrintLastError();
+    }
+    p_mhac_config_.reset();
+    return false;
+  }
+
+  SIA_MHA_PARAM param = {0};
+  ret = sia_mha_init(p_context_.get(), &param);
+  LOGD("%s::sia_mha_init(cxt:%p, param:%p)",
+       __FUNCTION__, p_context_.get(), &param);
+  if (ret) {
+    LOGE("sia_mha_init failed ret:%d", ret);
+    if (ret >= SIA_ERR_TYPE_1) {
+      PrintLastError();
+    }
+    sia_mha_bsClose(p_context_.get());
+    return false;
+  }
+
+  is_configured_ = true;
+  return true;
+}
+
+bool MpeghDecoder::ResetDecoder() {
+  if (!is_initialized_ || !is_configured_) return false;
   int ret = sia_mha_close(p_context_.get());
   LOGD("%s::sia_mha_close(cxt:%p)",
        __FUNCTION__, p_context_.get());
@@ -154,25 +196,36 @@ bool MpeghDecoder::Close() {
   }
   p_mhac_config_.reset();
 
-  is_opened_ = false;
+  is_configured_ = false;
   return true;
 }
 
 MpeghDecoderError MpeghDecoder::Decode(uint8_t *inputBuffer, int inputSize,
                                        float *outputBuffer, int *outputSize) {
-  if (inputBuffer == NULL || outputBuffer == NULL) return MpeghDecoderError::Error;
-  if (inputSize <= 0) return MpeghDecoderError::Error;
-  if (!is_initialized_ || !is_opened_) return MpeghDecoderError::Error;
+  if (inputBuffer == NULL || outputBuffer == NULL) return MpeghDecoderError::kError;
+  if (inputSize <= 0) return MpeghDecoderError::kError;
+  if (!is_initialized_ ) return MpeghDecoderError::kError;
+
+  if (!is_configured_) {
+    bool ret = ConfigureMhm1(inputBuffer, inputSize);
+    if (ret != true) return MpeghDecoderError::kError;
+  }
 
   int is_last_frame = 0;
-  int result = sia_mha_rawbsReadFrame(p_context_.get(),
-                                  inputBuffer, inputSize, &is_last_frame);
+  int result = 0;
+  if (is_codec_mha1_) {
+    result = sia_mha_rawbsReadFrame(p_context_.get(),
+                                    inputBuffer, inputSize, &is_last_frame);
+  } else {
+    result = sia_mha_bsReadFrame(p_context_.get(),
+                                 inputBuffer, inputSize, &is_last_frame);
+  }
   if (result) {
-    LOGE("sia_mha_rawbsReadFrame : %d", result);
+    LOGE("sia_mha_ReadFrame : %d", result);
     if (result >= SIA_ERR_TYPE_1) {
       PrintLastError();
     }
-    return MpeghDecoderError::Error;
+    return MpeghDecoderError::kError;
   }
 
   float temp_buff_planar[kSamplePerFrame * kNumberOfChannels];
@@ -181,13 +234,13 @@ MpeghDecoderError MpeghDecoder::Decode(uint8_t *inputBuffer, int inputSize,
   result = sia_mha_procFrame(p_context_.get(), &is_last_frame, p_pcm_out);
   if (result) {
     LOGE("sia_mha_procFrame : %d", result);
-    return MpeghDecoderError::Error;
+    return MpeghDecoderError::kError;
   }
 
   if (multithread_delay_counter_ < kDecoderMultithreadDelay) {
     *outputSize = 0;
     multithread_delay_counter_++;
-    return MpeghDecoderError::InvalidData;
+    return MpeghDecoderError::kInvalidData;
   }
 
   for (int i = 0; i < kSamplePerFrame; i++) {
@@ -200,18 +253,18 @@ MpeghDecoderError MpeghDecoder::Decode(uint8_t *inputBuffer, int inputSize,
   result = alc_proc(GetAlcHandle(), outputBuffer, outputBuffer);
   if (result != 0) {
     LOGE("alc_proc() : error (code=%d)\n", result);
-    return MpeghDecoderError::Error;
+    return MpeghDecoderError::kError;
   }
 
   *outputSize = kSamplePerFrame * kNumberOfChannels * sizeof(float);
 
-  return MpeghDecoderError::NoError;
+  return MpeghDecoderError::kNoError;
 }
 
 MpeghDecoderError MpeghDecoder::DecodeEos(float *outputBuffer, int *outputSize) {
   int result = 0;
-  if (outputBuffer == NULL || outputSize == NULL) return MpeghDecoderError::Error;
-  if (!is_initialized_ || !is_opened_) return MpeghDecoderError::Error;
+  if (outputBuffer == NULL || outputSize == NULL) return MpeghDecoderError::kError;
+  if (!is_initialized_ || !is_configured_) return MpeghDecoderError::kError;
 
   int sample_offset = 0;
   float temp_buff_planar[kSamplePerFrame * kNumberOfChannels];
@@ -221,7 +274,7 @@ MpeghDecoderError MpeghDecoder::DecodeEos(float *outputBuffer, int *outputSize) 
   result = sia_mha_procFrame(p_context_.get(), &is_last_frame, p_pcm_out);
   if (result) {
     LOGE("sia_mha_procFrame : %d", result);
-    return MpeghDecoderError::Error;
+    return MpeghDecoderError::kError;
   }
 
   for (int i = 0; i < kSamplePerFrame; i++) {
@@ -235,16 +288,16 @@ MpeghDecoderError MpeghDecoder::DecodeEos(float *outputBuffer, int *outputSize) 
                     &outputBuffer[sample_offset]);
   if (result != 0) {
     LOGE("alc_proc() : error (code=%d)\n", result);
-    return MpeghDecoderError::Error;
+    return MpeghDecoderError::kError;
   }
   sample_offset += kSamplePerFrame * kNumberOfChannels;
   *outputSize = sample_offset * sizeof(float);
 
-  return MpeghDecoderError::NoError;
+  return MpeghDecoderError::kNoError;
 }
 
-void MpeghDecoder::Reset() {
-  if (!is_initialized_ || !is_opened_) return;
+void MpeghDecoder::ResetBuffer() {
+  if (!is_initialized_ || !is_configured_) return;
   sia_mha_reset(p_context_.get());
   multithread_delay_counter_ = 0;
   LOGD("%s()", __FUNCTION__);

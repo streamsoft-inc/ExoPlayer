@@ -10,9 +10,9 @@
 namespace mpegh {
 
 enum class MpeghDecoderError {
-  NoError = 0,
-  InvalidData,
-  Error,
+  kNoError = 0,
+  kInvalidData,
+  kError,
 };
 
 class MpeghDecoder {
@@ -25,13 +25,13 @@ class MpeghDecoder {
   MpeghDecoder &operator=(const MpeghDecoder &rhs) = delete;
 
   /*!
-   * Set mpeg-h configulation (mhac container)
+   * Set mpeg-h configulation (mhac container) for mha1
    *
    * [in] config_size   mhac configuration size
    * [in] config        pointer to mhac configuration
    * [return] true : success false : failed
    */
-  bool Open(size_t config_size, uint8_t *config);
+  bool Configure(size_t config_size, uint8_t *config);
 
   /*!
    * Decode mpeg-h data
@@ -60,12 +60,12 @@ class MpeghDecoder {
   /*!
    * Reset decoder's internal state
    */
-  void Reset();
+  void ResetBuffer();
 
   /*!
-   * Close mpegh decoder and reset mpeg-h configulation
+   * Reset mpegh decoder configulation
    */
-  bool Close();
+  bool ResetDecoder();
 
   static int GetOutputChannelCount();
   static int GetOutputFrequency();
@@ -85,7 +85,8 @@ class MpeghDecoder {
   std::unique_ptr<uint8_t> p_mhac_config_;
   std::unique_ptr<uint8_t, AlignedAllocDeleter> p_alc_work_area_;
   bool is_initialized_;
-  bool is_opened_;
+  bool is_configured_;
+  bool is_codec_mha1_;
   int multithread_delay_counter_;
 
   void PrintLastError();
@@ -93,6 +94,7 @@ class MpeghDecoder {
                   const std::string &configFilePathHrtf,
                   const std::string &configFilePathCp);
   bool AlcInit();
+  bool ConfigureMhm1(uint8_t *inputBuffer, int inputSize);
   void *GetAlcHandle();
   void PrintAlcParam(const alc_config_t &alc_config);
 };

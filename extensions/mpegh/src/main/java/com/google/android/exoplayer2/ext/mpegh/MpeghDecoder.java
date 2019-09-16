@@ -45,6 +45,9 @@ import java.util.List;
   private static final int MPEGH_DECODER_ERROR_INVALID_DATA = -1;
   private static final int MPEGH_DECODER_ERROR_OTHER = -2;
 
+  private static final int MPEGH_DECODER_CODEC_MHA1 = 0;
+  private static final int MPEGH_DECODER_CODEC_MHM1 = 1;
+
   private final String codecName;
   private final byte[] extraData;
   private final @C.Encoding int encoding;
@@ -86,7 +89,9 @@ import java.util.List;
     Log.v(TAG, "MpeghInitialize: ");
 
     // initialize a decoder
-    nativeContext = MpeghInitialize(extraData,
+    nativeContext = MpeghInitialize(
+            mimeType == MimeTypes.AUDIO_MPEGH_MHA1 ? MPEGH_DECODER_CODEC_MHA1 : MPEGH_DECODER_CODEC_MHM1,
+            extraData,
             appRootPath,
             hrtfConfigFilePath,
             cpConfigFilePath);
@@ -223,7 +228,7 @@ import java.util.List;
    */
   private static byte[] getExtraData(String mimeType, List<byte[]> initializationData) {
     switch (mimeType) {
-      case MimeTypes.BASE_TYPE_AUDIO + "/mha1":
+      case MimeTypes.AUDIO_MPEGH_MHA1:
         return initializationData.get(0);
       default:
         // Other codecs do not require extra data.
@@ -231,7 +236,7 @@ import java.util.List;
     }
   }
 
-  private native long MpeghInitialize(byte[] extraData, String rootPath, String fnameCoef1, String fnameCoef2);
+  private native long MpeghInitialize(int codecType, byte[] extraData, String rootPath, String fnameCoef1, String fnameCoef2);
   private native int  MpeghDecode(long context, ByteBuffer inputData, int inputSize,
                                   ByteBuffer outputBuffer, int outputBufferSize, boolean isEndOsStream);
   private native int  MpeghGetChannelCount(long context);

@@ -60,8 +60,15 @@ extern "C" {
 using mpegh::MpeghDecoderError;
 using mpegh::MpeghDecoder;
 
-static const int MPEGH_DECODER_ERROR_INVALID_DATA = -1;
-static const int MPEGH_DECODER_ERROR_OTHER = -2;
+enum MpeghJniError : int {
+  kInvalidData = -1,
+  kErrorOther = -2,
+};
+
+enum MpeghCodecType : int {
+  kMha1 = 0,
+  kMhm1 = 1,
+};
 
 jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   JNIEnv *env;
@@ -81,26 +88,28 @@ LIBRARY_FUNC(jstring, MpeghGetVersion) {
   return env->NewStringUTF(stream.str().c_str());
 }
 
-DECODER_FUNC(jlong, MpeghInitialize, jbyteArray extraData,
+DECODER_FUNC(jlong, MpeghInitialize, jint codecType, jbyteArray extraData,
              jstring rootPath, jstring configFilePathHrtf,
              jstring configFilePathCp) {
-  const char* root = env->GetStringUTFChars(rootPath, 0);
-  const char* hrtf = env->GetStringUTFChars(configFilePathHrtf, 0);
-  const char* cp = env->GetStringUTFChars(configFilePathCp, 0);
-  jsize config_size = env->GetArrayLength(extraData);
-  jbyte *config = env->GetByteArrayElements(extraData, 0);
+  const char *root = env->GetStringUTFChars(rootPath, 0);
+  const char *hrtf = env->GetStringUTFChars(configFilePathHrtf, 0);
+  const char *cp = env->GetStringUTFChars(configFilePathCp, 0);
 
   // mpehg decoder initialize
   mpegh::MpeghDecoder* decoder = new mpegh::MpeghDecoder(std::string(root),
                                                          std::string(hrtf),
                                                          std::string(cp));
-  bool ret = decoder->Open(config_size, reinterpret_cast<uint8_t*>(config));
-  if (ret != true) {
-    delete decoder;
-    decoder = NULL;
+  if (codecType == MpeghCodecType::kMha1) {
+    jsize config_size = env->GetArrayLength(extraData);
+    jbyte *config = env->GetByteArrayElements(extraData, 0);
+    bool ret = decoder->Configure(config_size, reinterpret_cast<uint8_t*>(config));
+    env->ReleaseByteArrayElements(extraData, config, 0);
+    if (ret != true) {
+      delete decoder;
+      decoder = NULL;
+    }
   }
 
-  env->ReleaseByteArrayElements(extraData, config, 0);
   env->ReleaseStringUTFChars(rootPath, root);
   env->ReleaseStringUTFChars(configFilePathHrtf, hrtf);
   env->ReleaseStringUTFChars(configFilePathCp, cp);
@@ -137,7 +146,7 @@ DECODER_FUNC(jint, MpeghDecode, jlong jHandle, jobject inputData,
       reinterpret_cast<float*>(env->GetDirectBufferAddress(outputData));
   int decodedSize = 0;
 
-  MpeghDecoderError ret = MpeghDecoderError::Error;
+  MpeghDecoderError ret = MpeghDecoderError::kError;
   if (isEndOfStream == false) {
     ret = decoder->Decode(inputBuffer,
                           inputSize,
@@ -146,10 +155,10 @@ DECODER_FUNC(jint, MpeghDecode, jlong jHandle, jobject inputData,
   } else {
     ret = decoder->DecodeEos(outputBuffer, &decodedSize);
   }
-  if (ret == MpeghDecoderError::Error) {
-    return MPEGH_DECODER_ERROR_OTHER;
-  } else if (ret ==MpeghDecoderError::InvalidData) {
-    return MPEGH_DECODER_ERROR_INVALID_DATA;
+  if (ret == MpeghDecoderError::kError) {
+    return MpeghJniError::kErrorOther;
+  } else if (ret == MpeghDecoderError::kInvalidData) {
+    return MpeghJniError::kInvalidData;
   }
 
   return decodedSize;
@@ -178,7 +187,7 @@ DECODER_FUNC(jlong, MpeghReset, jlong jHandle, jbyteArray extraData) {
   }
   MpeghDecoder *decoder =
       reinterpret_cast<MpeghDecoder*>(jHandle);
-  decoder->Reset();
+  decoder->ResetBuffer();
   return (jlong) jHandle;
 }
 
@@ -189,7 +198,7 @@ DECODER_FUNC(void, MpeghRelease, jlong jHandle) {
   }
   MpeghDecoder *decoder =
       reinterpret_cast<MpeghDecoder*>(jHandle);
-  decoder->Close();
+  decoder->ResetDecoder();
   delete decoder;
   return;
 }
