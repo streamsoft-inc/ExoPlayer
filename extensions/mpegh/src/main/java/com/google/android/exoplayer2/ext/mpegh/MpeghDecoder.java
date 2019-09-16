@@ -90,7 +90,7 @@ import java.util.List;
 
     // initialize a decoder
     nativeContext = MpeghInitialize(
-            mimeType == MimeTypes.AUDIO_MPEGH_MHA1 ? MPEGH_DECODER_CODEC_MHA1 : MPEGH_DECODER_CODEC_MHM1,
+            mimeType == MimeTypes.BASE_TYPE_AUDIO + "/mha1" ? MPEGH_DECODER_CODEC_MHA1 : MPEGH_DECODER_CODEC_MHM1,
             extraData,
             appRootPath,
             hrtfConfigFilePath,
@@ -228,7 +228,7 @@ import java.util.List;
    */
   private static byte[] getExtraData(String mimeType, List<byte[]> initializationData) {
     switch (mimeType) {
-      case MimeTypes.AUDIO_MPEGH_MHA1:
+      case (MimeTypes.BASE_TYPE_AUDIO + "/mha1"):
         return initializationData.get(0);
       default:
         // Other codecs do not require extra data.

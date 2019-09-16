@@ -81,9 +81,9 @@ public final class MpeghLibrary {
    */
   /* package */ static String getCodecName(String mimeType) {
     switch (mimeType) {
-      case MimeTypes.AUDIO_MPEGH_MHA1:
+      case (MimeTypes.BASE_TYPE_AUDIO + "/mha1") :
         return "mpegh3d.mha1";
-      case MimeTypes.AUDIO_MPEGH_MHM1:
+      case (MimeTypes.BASE_TYPE_AUDIO + "/mhm1") :
         return "mpegh3d.mhm1";
       default:
         return null;
