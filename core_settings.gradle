@@ -40,6 +40,7 @@ include modulePrefix + 'extension-leanback'
 include modulePrefix + 'extension-jobdispatcher'
 include modulePrefix + 'extension-mpegh'
 include modulePrefix + 'extension-virtualizer'
+include modulePrefix + 'extension-workmanager'
 
 project(modulePrefix + 'library').projectDir = new File(rootDir, 'library/all')
 project(modulePrefix + 'library-core').projectDir = new File(rootDir, 'library/core')
@@ -65,3 +66,4 @@ project(modulePrefix + 'extension-jobdispatcher').projectDir = new File(rootDir,
 project(modulePrefix + 'extension-mpegh').projectDir = new File(rootDir, 'extensions/mpegh')
 project(modulePrefix + 'extension-virtualizer').projectDir = new File(rootDir, 'extensions/virtualizer')
 
+project(modulePrefix + 'extension-workmanager').projectDir = new File(rootDir, 'extensions/workmanager')

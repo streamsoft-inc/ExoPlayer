@@ -15,8 +15,8 @@
  */
 package com.google.android.exoplayer2;
 
-import android.support.annotation.CheckResult;
-import android.support.annotation.Nullable;
+import androidx.annotation.CheckResult;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
@@ -48,7 +48,8 @@ import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
   /**
    * If {@link #periodId} refers to an ad, the position of the suspended content relative to the
    * start of the associated period in the {@link #timeline}, in microseconds. {@link C#TIME_UNSET}
-   * if {@link #periodId} does not refer to an ad.
+   * if {@link #periodId} does not refer to an ad or if the suspended content should be played from
+   * its default position.
    */
   public final long contentPositionUs;
   /** The current playback state. One of the {@link Player}.STATE_ constants. */
