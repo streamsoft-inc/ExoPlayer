@@ -15,51 +15,70 @@
  */
 package com.google.android.exoplayer2.ext.mpegh;
 
-import android.util.Log;
-import android.util.Pair;
+import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4ObjectType;
 
+import android.util.Pair;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ParserException;
 import com.google.android.exoplayer2.audio.Ac3Util;
+import com.google.android.exoplayer2.audio.Ac4Util;
 import com.google.android.exoplayer2.drm.DrmInitData;
 import com.google.android.exoplayer2.extractor.GaplessInfoHolder;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.CodecSpecificDataUtil;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.AvcConfig;
+import com.google.android.exoplayer2.video.DolbyVisionConfig;
 import com.google.android.exoplayer2.video.HevcConfig;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4ObjectType;
-
-/**
- * Utility methods for parsing MP4 format atom payloads according to ISO 14496-12.
- */
+/** Utility methods for parsing MP4 format atom payloads according to ISO 14496-12. */
+@SuppressWarnings({"ConstantField"})
 /* package */ final class AtomParsers {
 
   private static final String TAG = "AtomParsers";
 
-  private static final int TYPE_vide = Util.getIntegerCodeForString("vide");
-  private static final int TYPE_soun = Util.getIntegerCodeForString("soun");
-  private static final int TYPE_text = Util.getIntegerCodeForString("text");
-  private static final int TYPE_sbtl = Util.getIntegerCodeForString("sbtl");
-  private static final int TYPE_subt = Util.getIntegerCodeForString("subt");
-  private static final int TYPE_clcp = Util.getIntegerCodeForString("clcp");
-  private static final int TYPE_meta = Util.getIntegerCodeForString("meta");
+  @SuppressWarnings("ConstantCaseForConstants")
+  private static final int TYPE_vide = 0x76696465;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  private static final int TYPE_soun = 0x736f756e;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  private static final int TYPE_text = 0x74657874;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  private static final int TYPE_sbtl = 0x7362746c;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  private static final int TYPE_subt = 0x73756274;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  private static final int TYPE_clcp = 0x636c6370;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  private static final int TYPE_meta = 0x6d657461;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  private static final int TYPE_mdta = 0x6d647461;
 
   /**
    * The threshold number of samples to trim from the start/end of an audio track when applying an
    * edit below which gapless info can be used (rather than removing samples from the sample table).
    */
-  private static final int MAX_GAPLESS_TRIM_SIZE_SAMPLES = 3;
+  private static final int MAX_GAPLESS_TRIM_SIZE_SAMPLES = 4;
+
+  /** The magic signature for an Opus Identification header, as defined in RFC-7845. */
+  private static final byte[] opusMagic = Util.getUtf8Bytes("OpusHead");
 
   /**
    * Parses a trak atom (defined in 14496-12).
@@ -77,7 +96,7 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
       DrmInitData drmInitData, boolean ignoreEditLists, boolean isQuickTime)
       throws ParserException {
     Atom.ContainerAtom mdia = trak.getContainerAtomOfType(Atom.TYPE_mdia);
-    int trackType = parseHdlr(mdia.getLeafAtomOfType(Atom.TYPE_hdlr).data);
+    int trackType = getTrackTypeForHdlr(parseHdlr(mdia.getLeafAtomOfType(Atom.TYPE_hdlr).data));
     if (trackType == C.TRACK_TYPE_UNKNOWN) {
       return null;
     }
@@ -119,10 +138,11 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
    * @param stblAtom stbl (sample table) atom to decode.
    * @param gaplessInfoHolder Holder to populate with gapless playback information.
    * @return Sample table described by the stbl atom.
-   * @throws ParserException If the resulting sample sequence does not contain a sync sample.
+   * @throws ParserException Thrown if the stbl atom can't be parsed.
    */
-  public static TrackSampleTable parseStbl(Track track, Atom.ContainerAtom stblAtom,
-      GaplessInfoHolder gaplessInfoHolder) throws ParserException {
+  public static TrackSampleTable parseStbl(
+      Track track, Atom.ContainerAtom stblAtom, GaplessInfoHolder gaplessInfoHolder)
+      throws ParserException {
     SampleSizeBox sampleSizeBox;
     Atom.LeafAtom stszAtom = stblAtom.getLeafAtomOfType(Atom.TYPE_stsz);
     if (stszAtom != null) {
@@ -138,7 +158,13 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
     int sampleCount = sampleSizeBox.getSampleCount();
     if (sampleCount == 0) {
       return new TrackSampleTable(
-          new long[0], new int[0], 0, new long[0], new int[0], C.TIME_UNSET);
+          track,
+          /* offsets= */ new long[0],
+          /* sizes= */ new int[0],
+          /* maximumSize= */ 0,
+          /* timestampsUs= */ new long[0],
+          /* flags= */ new int[0],
+          /* durationUs= */ C.TIME_UNSET);
     }
 
     // Entries are byte offsets of chunks.
@@ -217,10 +243,19 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
 
       for (int i = 0; i < sampleCount; i++) {
         // Advance to the next chunk if necessary.
-        while (remainingSamplesInChunk == 0) {
-          Assertions.checkState(chunkIterator.moveNext());
+        boolean chunkDataComplete = true;
+        while (remainingSamplesInChunk == 0 && (chunkDataComplete = chunkIterator.moveNext())) {
           offset = chunkIterator.offset;
           remainingSamplesInChunk = chunkIterator.numSamples;
+        }
+        if (!chunkDataComplete) {
+          Log.w(TAG, "Unexpected end of chunk data");
+          sampleCount = i;
+          offsets = Arrays.copyOf(offsets, sampleCount);
+          sizes = Arrays.copyOf(sizes, sampleCount);
+          timestamps = Arrays.copyOf(timestamps, sampleCount);
+          flags = Arrays.copyOf(flags, sampleCount);
+          break;
         }
 
         // Add on the timestamp offset if ctts is present.
@@ -275,23 +310,38 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
       }
       duration = timestampTimeUnits + timestampOffset;
 
-      Assertions.checkArgument(remainingSamplesAtTimestampOffset == 0);
-      // Remove trailing ctts entries with 0-valued sample counts.
+      // If the stbl's child boxes are not consistent the container is malformed, but the stream may
+      // still be playable.
+      boolean isCttsValid = true;
       while (remainingTimestampOffsetChanges > 0) {
-        Assertions.checkArgument(ctts.readUnsignedIntToInt() == 0);
+        if (ctts.readUnsignedIntToInt() != 0) {
+          isCttsValid = false;
+          break;
+        }
         ctts.readInt(); // Ignore offset.
         remainingTimestampOffsetChanges--;
       }
-
-      // If the stbl's child boxes are not consistent the container is malformed, but the stream may
-      // still be playable.
-      if (remainingSynchronizationSamples != 0 || remainingSamplesAtTimestampDelta != 0
-          || remainingSamplesInChunk != 0 || remainingTimestampDeltaChanges != 0) {
-        Log.w(TAG, "Inconsistent stbl box for track " + track.id
-            + ": remainingSynchronizationSamples " + remainingSynchronizationSamples
-            + ", remainingSamplesAtTimestampDelta " + remainingSamplesAtTimestampDelta
-            + ", remainingSamplesInChunk " + remainingSamplesInChunk
-            + ", remainingTimestampDeltaChanges " + remainingTimestampDeltaChanges);
+      if (remainingSynchronizationSamples != 0
+          || remainingSamplesAtTimestampDelta != 0
+          || remainingSamplesInChunk != 0
+          || remainingTimestampDeltaChanges != 0
+          || remainingSamplesAtTimestampOffset != 0
+          || !isCttsValid) {
+        Log.w(
+            TAG,
+            "Inconsistent stbl box for track "
+                + track.id
+                + ": remainingSynchronizationSamples "
+                + remainingSynchronizationSamples
+                + ", remainingSamplesAtTimestampDelta "
+                + remainingSamplesAtTimestampDelta
+                + ", remainingSamplesInChunk "
+                + remainingSamplesInChunk
+                + ", remainingTimestampDeltaChanges "
+                + remainingTimestampDeltaChanges
+                + ", remainingSamplesAtTimestampOffset "
+                + remainingSamplesAtTimestampOffset
+                + (!isCttsValid ? ", ctts invalid" : ""));
       }
     } else {
       long[] chunkOffsetsBytes = new long[chunkIterator.length];
@@ -313,11 +363,10 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
     }
     long durationUs = Util.scaleLargeTimestamp(duration, C.MICROS_PER_SECOND, track.timescale);
 
-    if (track.editListDurations == null || gaplessInfoHolder.hasGaplessInfo()) {
-      // There is no edit list, or we are ignoring it as we already have gapless metadata to apply.
-      // This implementation does not support applying both gapless metadata and an edit list.
+    if (track.editListDurations == null) {
       Util.scaleLargeTimestampsInPlace(timestamps, C.MICROS_PER_SECOND, track.timescale);
-      return new TrackSampleTable(offsets, sizes, maximumSize, timestamps, flags, durationUs);
+      return new TrackSampleTable(
+          track, offsets, sizes, maximumSize, timestamps, flags, durationUs);
     }
 
     // See the BMFF spec (ISO 14496-12) subsection 8.6.6. Edit lists that require prerolling from a
@@ -344,7 +393,11 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
           gaplessInfoHolder.encoderDelay = (int) encoderDelay;
           gaplessInfoHolder.encoderPadding = (int) encoderPadding;
           Util.scaleLargeTimestampsInPlace(timestamps, C.MICROS_PER_SECOND, track.timescale);
-          return new TrackSampleTable(offsets, sizes, maximumSize, timestamps, flags, durationUs);
+          long editedDurationUs =
+              Util.scaleLargeTimestamp(
+                  track.editListDurations[0], C.MICROS_PER_SECOND, track.movieTimescale);
+          return new TrackSampleTable(
+              track, offsets, sizes, maximumSize, timestamps, flags, editedDurationUs);
         }
       }
     }
@@ -361,7 +414,8 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
       }
       durationUs =
           Util.scaleLargeTimestamp(duration - editStartTime, C.MICROS_PER_SECOND, track.timescale);
-      return new TrackSampleTable(offsets, sizes, maximumSize, timestamps, flags, durationUs);
+      return new TrackSampleTable(
+          track, offsets, sizes, maximumSize, timestamps, flags, durationUs);
     }
 
     // Omit any sample at the end point of an edit for audio tracks.
@@ -371,19 +425,29 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
     int editedSampleCount = 0;
     int nextSampleIndex = 0;
     boolean copyMetadata = false;
+    int[] startIndices = new int[track.editListDurations.length];
+    int[] endIndices = new int[track.editListDurations.length];
     for (int i = 0; i < track.editListDurations.length; i++) {
       long editMediaTime = track.editListMediaTimes[i];
       if (editMediaTime != -1) {
         long editDuration =
             Util.scaleLargeTimestamp(
                 track.editListDurations[i], track.timescale, track.movieTimescale);
-        int startIndex = Util.binarySearchCeil(timestamps, editMediaTime, true, true);
-        int endIndex =
+        startIndices[i] = Util.binarySearchCeil(timestamps, editMediaTime, true, true);
+        endIndices[i] =
             Util.binarySearchCeil(
                 timestamps, editMediaTime + editDuration, omitClippedSample, false);
-        editedSampleCount += endIndex - startIndex;
-        copyMetadata |= nextSampleIndex != startIndex;
-        nextSampleIndex = endIndex;
+        while (startIndices[i] < endIndices[i]
+            && (flags[startIndices[i]] & C.BUFFER_FLAG_KEY_FRAME) == 0) {
+          // Applying the edit correctly would require prerolling from the previous sync sample. In
+          // the current implementation we advance to the next sync sample instead. Only other
+          // tracks (i.e. audio) will be rendered until the time of the first sync sample.
+          // See https://github.com/google/ExoPlayer/issues/1659.
+          startIndices[i]++;
+        }
+        editedSampleCount += endIndices[i] - startIndices[i];
+        copyMetadata |= nextSampleIndex != startIndices[i];
+        nextSampleIndex = endIndices[i];
       }
     }
     copyMetadata |= editedSampleCount != sampleCount;
@@ -398,48 +462,31 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
     int sampleIndex = 0;
     for (int i = 0; i < track.editListDurations.length; i++) {
       long editMediaTime = track.editListMediaTimes[i];
-      long editDuration = track.editListDurations[i];
-      if (editMediaTime != -1) {
-        long endMediaTime =
-            editMediaTime
-                + Util.scaleLargeTimestamp(editDuration, track.timescale, track.movieTimescale);
-        int startIndex = Util.binarySearchCeil(timestamps, editMediaTime, true, true);
-        int endIndex = Util.binarySearchCeil(timestamps, endMediaTime, omitClippedSample, false);
-        if (copyMetadata) {
-          int count = endIndex - startIndex;
-          System.arraycopy(offsets, startIndex, editedOffsets, sampleIndex, count);
-          System.arraycopy(sizes, startIndex, editedSizes, sampleIndex, count);
-          System.arraycopy(flags, startIndex, editedFlags, sampleIndex, count);
-        }
-        for (int j = startIndex; j < endIndex; j++) {
-          long ptsUs = Util.scaleLargeTimestamp(pts, C.MICROS_PER_SECOND, track.movieTimescale);
-          long timeInSegmentUs =
-              Util.scaleLargeTimestamp(
-                  timestamps[j] - editMediaTime, C.MICROS_PER_SECOND, track.timescale);
-          editedTimestamps[sampleIndex] = ptsUs + timeInSegmentUs;
-          if (copyMetadata && editedSizes[sampleIndex] > editedMaximumSize) {
-            editedMaximumSize = sizes[j];
-          }
-          sampleIndex++;
-        }
+      int startIndex = startIndices[i];
+      int endIndex = endIndices[i];
+      if (copyMetadata) {
+        int count = endIndex - startIndex;
+        System.arraycopy(offsets, startIndex, editedOffsets, sampleIndex, count);
+        System.arraycopy(sizes, startIndex, editedSizes, sampleIndex, count);
+        System.arraycopy(flags, startIndex, editedFlags, sampleIndex, count);
       }
-      pts += editDuration;
+      for (int j = startIndex; j < endIndex; j++) {
+        long ptsUs = Util.scaleLargeTimestamp(pts, C.MICROS_PER_SECOND, track.movieTimescale);
+        long timeInSegmentUs =
+            Util.scaleLargeTimestamp(
+                timestamps[j] - editMediaTime, C.MICROS_PER_SECOND, track.timescale);
+        editedTimestamps[sampleIndex] = ptsUs + timeInSegmentUs;
+        if (copyMetadata && editedSizes[sampleIndex] > editedMaximumSize) {
+          editedMaximumSize = sizes[j];
+        }
+        sampleIndex++;
+      }
+      pts += track.editListDurations[i];
     }
-    long editedDurationUs = Util.scaleLargeTimestamp(pts, C.MICROS_PER_SECOND, track.timescale);
-
-    boolean hasSyncSample = false;
-    for (int i = 0; i < editedFlags.length && !hasSyncSample; i++) {
-      hasSyncSample |= (editedFlags[i] & C.BUFFER_FLAG_KEY_FRAME) != 0;
-    }
-    if (!hasSyncSample) {
-      // We don't support edit lists where the edited sample sequence doesn't contain a sync sample.
-      // Such edit lists are often (although not always) broken, so we ignore it and continue.
-      Log.w(TAG, "Ignoring edit list: Edited sample sequence does not contain a sync sample.");
-      Util.scaleLargeTimestampsInPlace(timestamps, C.MICROS_PER_SECOND, track.timescale);
-      return new TrackSampleTable(offsets, sizes, maximumSize, timestamps, flags, durationUs);
-    }
-
+    long editedDurationUs =
+        Util.scaleLargeTimestamp(pts, C.MICROS_PER_SECOND, track.movieTimescale);
     return new TrackSampleTable(
+        track,
         editedOffsets,
         editedSizes,
         editedMaximumSize,
@@ -455,6 +502,7 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
    * @param isQuickTime True for QuickTime media. False otherwise.
    * @return Parsed metadata, or null.
    */
+  @Nullable
   public static Metadata parseUdta(Atom.LeafAtom udtaAtom, boolean isQuickTime) {
     if (isQuickTime) {
       // Meta boxes are regular boxes rather than full boxes in QuickTime. For now, don't try and
@@ -469,14 +517,69 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
       int atomType = udtaData.readInt();
       if (atomType == Atom.TYPE_meta) {
         udtaData.setPosition(atomPosition);
-        return parseMetaAtom(udtaData, atomPosition + atomSize);
+        return parseUdtaMeta(udtaData, atomPosition + atomSize);
       }
-      udtaData.skipBytes(atomSize - Atom.HEADER_SIZE);
+      udtaData.setPosition(atomPosition + atomSize);
     }
     return null;
   }
 
-  private static Metadata parseMetaAtom(ParsableByteArray meta, int limit) {
+  /**
+   * Parses a metadata meta atom if it contains metadata with handler 'mdta'.
+   *
+   * @param meta The metadata atom to decode.
+   * @return Parsed metadata, or null.
+   */
+  @Nullable
+  public static Metadata parseMdtaFromMeta(Atom.ContainerAtom meta) {
+    Atom.LeafAtom hdlrAtom = meta.getLeafAtomOfType(Atom.TYPE_hdlr);
+    Atom.LeafAtom keysAtom = meta.getLeafAtomOfType(Atom.TYPE_keys);
+    Atom.LeafAtom ilstAtom = meta.getLeafAtomOfType(Atom.TYPE_ilst);
+    if (hdlrAtom == null
+        || keysAtom == null
+        || ilstAtom == null
+        || AtomParsers.parseHdlr(hdlrAtom.data) != TYPE_mdta) {
+      // There isn't enough information to parse the metadata, or the handler type is unexpected.
+      return null;
+    }
+
+    // Parse metadata keys.
+    ParsableByteArray keys = keysAtom.data;
+    keys.setPosition(Atom.FULL_HEADER_SIZE);
+    int entryCount = keys.readInt();
+    String[] keyNames = new String[entryCount];
+    for (int i = 0; i < entryCount; i++) {
+      int entrySize = keys.readInt();
+      keys.skipBytes(4); // keyNamespace
+      int keySize = entrySize - 8;
+      keyNames[i] = keys.readString(keySize);
+    }
+
+    // Parse metadata items.
+    ParsableByteArray ilst = ilstAtom.data;
+    ilst.setPosition(Atom.HEADER_SIZE);
+    ArrayList<Metadata.Entry> entries = new ArrayList<>();
+    while (ilst.bytesLeft() > Atom.HEADER_SIZE) {
+      int atomPosition = ilst.getPosition();
+      int atomSize = ilst.readInt();
+      int keyIndex = ilst.readInt() - 1;
+      if (keyIndex >= 0 && keyIndex < keyNames.length) {
+        String key = keyNames[keyIndex];
+        Metadata.Entry entry =
+            MetadataUtil.parseMdtaMetadataEntryFromIlst(ilst, atomPosition + atomSize, key);
+        if (entry != null) {
+          entries.add(entry);
+        }
+      } else {
+        Log.w(TAG, "Skipped metadata with unknown key index: " + keyIndex);
+      }
+      ilst.setPosition(atomPosition + atomSize);
+    }
+    return entries.isEmpty() ? null : new Metadata(entries);
+  }
+
+  @Nullable
+  private static Metadata parseUdtaMeta(ParsableByteArray meta, int limit) {
     meta.skipBytes(Atom.FULL_HEADER_SIZE);
     while (meta.getPosition() < limit) {
       int atomPosition = meta.getPosition();
@@ -486,11 +589,12 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
         meta.setPosition(atomPosition);
         return parseIlst(meta, atomPosition + atomSize);
       }
-      meta.skipBytes(atomSize - Atom.HEADER_SIZE);
+      meta.setPosition(atomPosition + atomSize);
     }
     return null;
   }
 
+  @Nullable
   private static Metadata parseIlst(ParsableByteArray ilst, int limit) {
     ilst.skipBytes(Atom.HEADER_SIZE);
     ArrayList<Metadata.Entry> entries = new ArrayList<>();
@@ -580,19 +684,22 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
    * Parses an hdlr atom.
    *
    * @param hdlr The hdlr atom to decode.
-   * @return The track type.
+   * @return The handler value.
    */
   private static int parseHdlr(ParsableByteArray hdlr) {
     hdlr.setPosition(Atom.FULL_HEADER_SIZE + 4);
-    int trackType = hdlr.readInt();
-    if (trackType == TYPE_soun) {
+    return hdlr.readInt();
+  }
+
+  /** Returns the track type for a given handler value. */
+  private static int getTrackTypeForHdlr(int hdlr) {
+    if (hdlr == TYPE_soun) {
       return C.TRACK_TYPE_AUDIO;
-    } else if (trackType == TYPE_vide) {
+    } else if (hdlr == TYPE_vide) {
       return C.TRACK_TYPE_VIDEO;
-    } else if (trackType == TYPE_text || trackType == TYPE_sbtl || trackType == TYPE_subt
-        || trackType == TYPE_clcp) {
+    } else if (hdlr == TYPE_text || hdlr == TYPE_sbtl || hdlr == TYPE_subt || hdlr == TYPE_clcp) {
       return C.TRACK_TYPE_TEXT;
-    } else if (trackType == TYPE_meta) {
+    } else if (hdlr == TYPE_meta) {
       return C.TRACK_TYPE_METADATA;
     } else {
       return C.TRACK_TYPE_UNKNOWN;
@@ -614,9 +721,11 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
     long timescale = mdhd.readUnsignedInt();
     mdhd.skipBytes(version == 0 ? 4 : 8);
     int languageCode = mdhd.readUnsignedShort();
-    String language = "" + (char) (((languageCode >> 10) & 0x1F) + 0x60)
-        + (char) (((languageCode >> 5) & 0x1F) + 0x60)
-        + (char) (((languageCode) & 0x1F) + 0x60);
+    String language =
+        ""
+            + (char) (((languageCode >> 10) & 0x1F) + 0x60)
+            + (char) (((languageCode >> 5) & 0x1F) + 0x60)
+            + (char) ((languageCode & 0x1F) + 0x60);
     return Pair.create(timescale, language);
   }
 
@@ -641,21 +750,44 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
       int childAtomSize = stsd.readInt();
       Assertions.checkArgument(childAtomSize > 0, "childAtomSize should be positive");
       int childAtomType = stsd.readInt();
-      if (childAtomType == Atom.TYPE_avc1 || childAtomType == Atom.TYPE_avc3
-          || childAtomType == Atom.TYPE_encv || childAtomType == Atom.TYPE_mp4v
-          || childAtomType == Atom.TYPE_hvc1 || childAtomType == Atom.TYPE_hev1
-          || childAtomType == Atom.TYPE_s263 || childAtomType == Atom.TYPE_vp08
-          || childAtomType == Atom.TYPE_vp09) {
+      if (childAtomType == Atom.TYPE_avc1
+          || childAtomType == Atom.TYPE_avc3
+          || childAtomType == Atom.TYPE_encv
+          || childAtomType == Atom.TYPE_mp4v
+          || childAtomType == Atom.TYPE_hvc1
+          || childAtomType == Atom.TYPE_hev1
+          || childAtomType == Atom.TYPE_s263
+          || childAtomType == Atom.TYPE_vp08
+          || childAtomType == Atom.TYPE_vp09
+          || childAtomType == Atom.TYPE_av01
+          || childAtomType == Atom.TYPE_dvav
+          || childAtomType == Atom.TYPE_dva1
+          || childAtomType == Atom.TYPE_dvhe
+          || childAtomType == Atom.TYPE_dvh1) {
         parseVideoSampleEntry(stsd, childAtomType, childStartPosition, childAtomSize, trackId,
             rotationDegrees, drmInitData, out, i);
-      } else if (childAtomType == Atom.TYPE_mp4a || childAtomType == Atom.TYPE_enca
-          || childAtomType == Atom.TYPE_ac_3 || childAtomType == Atom.TYPE_ec_3
-          || childAtomType == Atom.TYPE_dtsc || childAtomType == Atom.TYPE_dtse
-          || childAtomType == Atom.TYPE_dtsh || childAtomType == Atom.TYPE_dtsl
-          || childAtomType == Atom.TYPE_samr || childAtomType == Atom.TYPE_sawb
-          || childAtomType == Atom.TYPE_lpcm || childAtomType == Atom.TYPE_sowt
-          || childAtomType == Atom.TYPE__mp3 || childAtomType == Atom.TYPE_alac
-          || childAtomType == Atom.TYPE_mha1 || childAtomType == Atom.TYPE_mhm1) {
+      } else if (childAtomType == Atom.TYPE_mp4a
+          || childAtomType == Atom.TYPE_enca
+          || childAtomType == Atom.TYPE_ac_3
+          || childAtomType == Atom.TYPE_ec_3
+          || childAtomType == Atom.TYPE_ac_4
+          || childAtomType == Atom.TYPE_dtsc
+          || childAtomType == Atom.TYPE_dtse
+          || childAtomType == Atom.TYPE_dtsh
+          || childAtomType == Atom.TYPE_dtsl
+          || childAtomType == Atom.TYPE_samr
+          || childAtomType == Atom.TYPE_sawb
+          || childAtomType == Atom.TYPE_lpcm
+          || childAtomType == Atom.TYPE_sowt
+          || childAtomType == Atom.TYPE_twos
+          || childAtomType == Atom.TYPE__mp3
+          || childAtomType == Atom.TYPE_alac
+          || childAtomType == Atom.TYPE_alaw
+          || childAtomType == Atom.TYPE_ulaw
+          || childAtomType == Atom.TYPE_Opus
+          || childAtomType == Atom.TYPE_fLaC
+          || childAtomType == Atom.TYPE_mha1
+          || childAtomType == Atom.TYPE_mhm1) {
         parseAudioSampleEntry(stsd, childAtomType, childStartPosition, childAtomSize, trackId,
             language, isQuickTime, drmInitData, out, i);
       } else if (childAtomType == Atom.TYPE_TTML || childAtomType == Atom.TYPE_tx3g
@@ -703,8 +835,18 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
       throw new IllegalStateException();
     }
 
-    out.format = Format.createTextSampleFormat(Integer.toString(trackId), mimeType, null,
-        Format.NO_VALUE, 0, language, Format.NO_VALUE, null, subsampleOffsetUs, initializationData);
+    out.format =
+        Format.createTextSampleFormat(
+            Integer.toString(trackId),
+            mimeType,
+            /* codecs= */ null,
+            /* bitrate= */ Format.NO_VALUE,
+            /* selectionFlags= */ 0,
+            language,
+            /* accessibilityChannel= */ Format.NO_VALUE,
+            /* drmInitData= */ null,
+            subsampleOffsetUs,
+            initializationData);
   }
 
   private static void parseVideoSampleEntry(ParsableByteArray parent, int atomType, int position,
@@ -738,6 +880,7 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
 
     List<byte[]> initializationData = null;
     String mimeType = null;
+    String codecs = null;
     byte[] projectionData = null;
     @C.StereoMode
     int stereoMode = Format.NO_VALUE;
@@ -768,9 +911,18 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
         HevcConfig hevcConfig = HevcConfig.parse(parent);
         initializationData = hevcConfig.initializationData;
         out.nalUnitLengthFieldLength = hevcConfig.nalUnitLengthFieldLength;
+      } else if (childAtomType == Atom.TYPE_dvcC || childAtomType == Atom.TYPE_dvvC) {
+        DolbyVisionConfig dolbyVisionConfig = DolbyVisionConfig.parse(parent);
+        if (dolbyVisionConfig != null) {
+          codecs = dolbyVisionConfig.codecs;
+          mimeType = MimeTypes.VIDEO_DOLBY_VISION;
+        }
       } else if (childAtomType == Atom.TYPE_vpcC) {
         Assertions.checkState(mimeType == null);
         mimeType = (atomType == Atom.TYPE_vp08) ? MimeTypes.VIDEO_VP8 : MimeTypes.VIDEO_VP9;
+      } else if (childAtomType == Atom.TYPE_av1C) {
+        Assertions.checkState(mimeType == null);
+        mimeType = MimeTypes.VIDEO_AV1;
       } else if (childAtomType == Atom.TYPE_d263) {
         Assertions.checkState(mimeType == null);
         mimeType = MimeTypes.VIDEO_H263;
@@ -816,9 +968,23 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
       return;
     }
 
-    out.format = Format.createVideoSampleFormat(Integer.toString(trackId), mimeType, null,
-        Format.NO_VALUE, Format.NO_VALUE, width, height, Format.NO_VALUE, initializationData,
-        rotationDegrees, pixelWidthHeightRatio, projectionData, stereoMode, null, drmInitData);
+    out.format =
+        Format.createVideoSampleFormat(
+            Integer.toString(trackId),
+            mimeType,
+            codecs,
+            /* bitrate= */ Format.NO_VALUE,
+            /* maxInputSize= */ Format.NO_VALUE,
+            width,
+            height,
+            /* frameRate= */ Format.NO_VALUE,
+            initializationData,
+            rotationDegrees,
+            pixelWidthHeightRatio,
+            projectionData,
+            stereoMode,
+            /* colorInfo= */ null,
+            drmInitData);
   }
 
   /**
@@ -876,6 +1042,7 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
 
     int channelCount;
     int sampleRate;
+    @C.PcmEncoding int pcmEncoding = Format.NO_VALUE;
 
     if (quickTimeSoundDescriptionVersion == 0 || quickTimeSoundDescriptionVersion == 1) {
       channelCount = parent.readUnsignedShort();
@@ -922,6 +1089,8 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
       mimeType = MimeTypes.AUDIO_AC3;
     } else if (atomType == Atom.TYPE_ec_3) {
       mimeType = MimeTypes.AUDIO_E_AC3;
+    } else if (atomType == Atom.TYPE_ac_4) {
+      mimeType = MimeTypes.AUDIO_AC4;
     } else if (atomType == Atom.TYPE_dtsc) {
       mimeType = MimeTypes.AUDIO_DTS;
     } else if (atomType == Atom.TYPE_dtsh || atomType == Atom.TYPE_dtsl) {
@@ -934,14 +1103,26 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
       mimeType = MimeTypes.AUDIO_AMR_WB;
     } else if (atomType == Atom.TYPE_lpcm || atomType == Atom.TYPE_sowt) {
       mimeType = MimeTypes.AUDIO_RAW;
+      pcmEncoding = C.ENCODING_PCM_16BIT;
+    } else if (atomType == Atom.TYPE_twos) {
+      mimeType = MimeTypes.AUDIO_RAW;
+      pcmEncoding = C.ENCODING_PCM_16BIT_BIG_ENDIAN;
     } else if (atomType == Atom.TYPE__mp3) {
       mimeType = MimeTypes.AUDIO_MPEG;
     } else if (atomType == Atom.TYPE_alac) {
       mimeType = MimeTypes.AUDIO_ALAC;
+    } else if (atomType == Atom.TYPE_alaw) {
+      mimeType = MimeTypes.AUDIO_ALAW;
+    } else if (atomType == Atom.TYPE_ulaw) {
+      mimeType = MimeTypes.AUDIO_MLAW;
+    } else if (atomType == Atom.TYPE_Opus) {
+      mimeType = MimeTypes.AUDIO_OPUS;
+    } else if (atomType == Atom.TYPE_fLaC) {
+      mimeType = MimeTypes.AUDIO_FLAC;
     } else if (atomType == Atom.TYPE_mha1) {
-      mimeType = MimeTypes.BASE_TYPE_AUDIO + "/mha1";
+        mimeType = MimeTypes.BASE_TYPE_AUDIO + "/mha1";
     } else if (atomType == Atom.TYPE_mhm1) {
-      mimeType = MimeTypes.BASE_TYPE_AUDIO + "/mhm1";
+        mimeType = MimeTypes.BASE_TYPE_AUDIO + "/mhm1";
     }
 
     byte[] initializationData = null;
@@ -959,8 +1140,8 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
           mimeType = mimeTypeAndInitializationData.first;
           initializationData = mimeTypeAndInitializationData.second;
           if (MimeTypes.AUDIO_AAC.equals(mimeType)) {
-            // TODO: Do we really need to do this? See [Internal: b/10903778]
-            // Update sampleRate and channelCount from the AudioSpecificConfig initialization data.
+            // Update sampleRate and channelCount from the AudioSpecificConfig initialization data,
+            // which is more reliable. See [Internal: b/10903778].
             Pair<Integer, Integer> audioSpecificConfig =
                 CodecSpecificDataUtil.parseAacAudioSpecificConfig(initializationData);
             sampleRate = audioSpecificConfig.first;
@@ -975,32 +1156,47 @@ import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4Obj
         parent.setPosition(Atom.HEADER_SIZE + childPosition);
         out.format = Ac3Util.parseEAc3AnnexFFormat(parent, Integer.toString(trackId), language,
             drmInitData);
+      } else if (childAtomType == Atom.TYPE_dac4) {
+        parent.setPosition(Atom.HEADER_SIZE + childPosition);
+        out.format =
+            Ac4Util.parseAc4AnnexEFormat(parent, Integer.toString(trackId), language, drmInitData);
       } else if (childAtomType == Atom.TYPE_ddts) {
         out.format = Format.createAudioSampleFormat(Integer.toString(trackId), mimeType, null,
             Format.NO_VALUE, Format.NO_VALUE, channelCount, sampleRate, null, drmInitData, 0,
             language);
+      } else if (childAtomType == Atom.TYPE_dOps) {
+        // Build an Opus Identification Header (defined in RFC-7845) by concatenating the Opus Magic
+        // Signature and the body of the dOps atom.
+        int childAtomBodySize = childAtomSize - Atom.HEADER_SIZE;
+        initializationData = new byte[opusMagic.length + childAtomBodySize];
+        System.arraycopy(opusMagic, 0, initializationData, 0, opusMagic.length);
+        parent.setPosition(childPosition + Atom.HEADER_SIZE);
+        parent.readBytes(initializationData, opusMagic.length, childAtomBodySize);
+      } else if (childAtomType == Atom.TYPE_dfLa) {
+        int childAtomBodySize = childAtomSize - Atom.FULL_HEADER_SIZE;
+        initializationData = new byte[4 + childAtomBodySize];
+        initializationData[0] = 0x66; // f
+        initializationData[1] = 0x4C; // L
+        initializationData[2] = 0x61; // a
+        initializationData[3] = 0x43; // C
+        parent.setPosition(childPosition + Atom.FULL_HEADER_SIZE);
+        parent.readBytes(initializationData, /* offset= */ 4, childAtomBodySize);
       } else if (childAtomType == Atom.TYPE_alac) {
-        initializationData = new byte[childAtomSize];
-        parent.setPosition(childPosition);
-        parent.readBytes(initializationData, 0, childAtomSize);
-      } else if (childAtomType == Atom.TYPE_mhac) {
-        int mhaC_header_size = 4 /* mhaC size */ + 4 /* mhaC string */ + 3 /* version */ + 2 /* config size */;
-        int mhaC_size = childAtomSize - mhaC_header_size;
-        if (mhaC_size > 0) {
-          channelCount = 2;
-          sampleRate = 48000;
-          initializationData = new byte[mhaC_size];
-          parent.setPosition(childPosition + mhaC_header_size);
-          parent.readBytes(initializationData, 0, mhaC_size);
-        }
+        int childAtomBodySize = childAtomSize - Atom.FULL_HEADER_SIZE;
+        initializationData = new byte[childAtomBodySize];
+        parent.setPosition(childPosition + Atom.FULL_HEADER_SIZE);
+        parent.readBytes(initializationData, /* offset= */ 0, childAtomBodySize);
+        // Update sampleRate and channelCount from the AudioSpecificConfig initialization data,
+        // which is more reliable. See https://github.com/google/ExoPlayer/pull/6629.
+        Pair<Integer, Integer> audioSpecificConfig =
+            CodecSpecificDataUtil.parseAlacAudioSpecificConfig(initializationData);
+        sampleRate = audioSpecificConfig.first;
+        channelCount = audioSpecificConfig.second;
       }
       childPosition += childAtomSize;
     }
 
     if (out.format == null && mimeType != null) {
-      // TODO: Determine the correct PCM encoding.
-      @C.PcmEncoding int pcmEncoding =
-          MimeTypes.AUDIO_RAW.equals(mimeType) ? C.ENCODING_PCM_16BIT : Format.NO_VALUE;
       out.format = Format.createAudioSampleFormat(Integer.toString(trackId), mimeType, null,
           Format.NO_VALUE, Format.NO_VALUE, channelCount, sampleRate, pcmEncoding,
           initializationData == null ? null : Collections.singletonList(initializationData),

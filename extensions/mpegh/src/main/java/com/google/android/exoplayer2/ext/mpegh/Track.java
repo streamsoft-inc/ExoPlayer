@@ -17,10 +17,9 @@ package com.google.android.exoplayer2.ext.mpegh;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
-
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
-
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
@@ -30,8 +29,10 @@ import java.lang.annotation.RetentionPolicy;
 public final class Track {
 
   /**
-   * The transformation to apply to samples in the track, if any.
+   * The transformation to apply to samples in the track, if any. One of {@link
+   * #TRANSFORMATION_NONE} or {@link #TRANSFORMATION_CEA608_CDAT}.
    */
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
   @IntDef({TRANSFORMATION_NONE, TRANSFORMATION_CEA608_CDAT})
   public @interface Transformation {}
@@ -122,9 +123,26 @@ public final class Track {
    * @return The {@link TrackEncryptionBox} for the given sample description index. Maybe null if no
    *     such entry exists.
    */
+  @Nullable
   public TrackEncryptionBox getSampleDescriptionEncryptionBox(int sampleDescriptionIndex) {
     return sampleDescriptionEncryptionBoxes == null ? null
         : sampleDescriptionEncryptionBoxes[sampleDescriptionIndex];
   }
 
+  // incompatible types in argument.
+  @SuppressWarnings("nullness:argument.type.incompatible")
+  public Track copyWithFormat(Format format) {
+    return new Track(
+        id,
+        type,
+        timescale,
+        movieTimescale,
+        durationUs,
+        format,
+        sampleTransformation,
+        sampleDescriptionEncryptionBoxes,
+        nalUnitLengthFieldLength,
+        editListDurations,
+        editListMediaTimes);
+  }
 }
