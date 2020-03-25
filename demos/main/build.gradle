@@ -26,7 +26,11 @@ android {
         versionName project.ext.releaseVersion
         versionCode project.ext.releaseVersionCode
         minSdkVersion project.ext.minSdkVersion
+<<<<<<< HEAD
         targetSdkVersion project.ext.targetSdkVersion
+=======
+        targetSdkVersion project.ext.appTargetSdkVersion
+>>>>>>> release-v2
     }
 
     buildTypes {
@@ -62,15 +66,21 @@ android {
 }
 
 dependencies {
+<<<<<<< HEAD
     implementation 'androidx.annotation:annotation:1.1.0'
     implementation 'androidx.legacy:legacy-support-core-ui:1.0.0'
     implementation 'androidx.fragment:fragment:1.0.0'
+=======
+    implementation 'androidx.annotation:annotation:' + androidxAnnotationVersion
+    implementation 'androidx.appcompat:appcompat:' + androidxAppCompatVersion
+>>>>>>> release-v2
     implementation 'com.google.android.material:material:1.0.0'
     implementation project(modulePrefix + 'library-core')
     implementation project(modulePrefix + 'library-dash')
     implementation project(modulePrefix + 'library-hls')
     implementation project(modulePrefix + 'library-smoothstreaming')
     implementation project(modulePrefix + 'library-ui')
+    withExtensionsImplementation project(path: modulePrefix + 'extension-av1')
     withExtensionsImplementation project(path: modulePrefix + 'extension-ffmpeg')
     withExtensionsImplementation project(path: modulePrefix + 'extension-flac')
     withExtensionsImplementation project(path: modulePrefix + 'extension-ima')

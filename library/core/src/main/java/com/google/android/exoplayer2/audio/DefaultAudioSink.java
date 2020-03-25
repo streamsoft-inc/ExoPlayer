@@ -27,6 +27,8 @@ import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.PlaybackParameters;
+import com.google.android.exoplayer2.audio.AudioProcessor.UnhandledAudioFormatException;
+import com.google.android.exoplayer2.extractor.MpegAudioHeader;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
@@ -37,7 +39,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 
 /**
@@ -122,7 +123,15 @@ public final class DefaultAudioSink implements AudioSink {
      * audioProcessors} applied before silence skipping and playback parameters.
      */
     public DefaultAudioProcessorChain(AudioProcessor... audioProcessors) {
-      this.audioProcessors = Arrays.copyOf(audioProcessors, audioProcessors.length + 2);
+      // The passed-in type may be more specialized than AudioProcessor[], so allocate a new array
+      // rather than using Arrays.copyOf.
+      this.audioProcessors = new AudioProcessor[audioProcessors.length + 2];
+      System.arraycopy(
+          /* src= */ audioProcessors,
+          /* srcPos= */ 0,
+          /* dest= */ this.audioProcessors,
+          /* destPos= */ 0,
+          /* length= */ audioProcessors.length);
       silenceSkippingAudioProcessor = new SilenceSkippingAudioProcessor();
       sonicAudioProcessor = new SonicAudioProcessor();
       this.audioProcessors[audioProcessors.length] = silenceSkippingAudioProcessor;
@@ -239,7 +248,7 @@ public final class DefaultAudioSink implements AudioSink {
   private final ArrayDeque<PlaybackParametersCheckpoint> playbackParametersCheckpoints;
 
   @Nullable private Listener listener;
-  /** Used to keep the audio session active on pre-V21 builds (see {@link #initialize()}). */
+  /** Used to keep the audio session active on pre-V21 builds (see {@link #initialize(long)}). */
   @Nullable private AudioTrack keepSessionIdAudioTrack;
 
   @Nullable private Configuration pendingConfiguration;
@@ -425,22 +434,25 @@ public final class DefaultAudioSink implements AudioSink {
         shouldConvertHighResIntPcmToFloat
             ? toFloatPcmAvailableAudioProcessors
             : toIntPcmAvailableAudioProcessors;
-    boolean flushAudioProcessors = false;
     if (processingEnabled) {
       trimmingAudioProcessor.setTrimFrameCount(trimStartFrames, trimEndFrames);
       channelMappingAudioProcessor.setChannelMap(outputChannels);
+      AudioProcessor.AudioFormat inputAudioFormat =
+          new AudioProcessor.AudioFormat(sampleRate, channelCount, encoding);
+      AudioProcessor.AudioFormat outputAudioFormat = inputAudioFormat;
       for (AudioProcessor audioProcessor : availableAudioProcessors) {
         try {
-          flushAudioProcessors |= audioProcessor.configure(sampleRate, channelCount, encoding);
-        } catch (AudioProcessor.UnhandledFormatException e) {
+          outputAudioFormat = audioProcessor.configure(inputAudioFormat);
+        } catch (UnhandledAudioFormatException e) {
           throw new ConfigurationException(e);
         }
         if (audioProcessor.isActive()) {
-          channelCount = audioProcessor.getOutputChannelCount();
-          sampleRate = audioProcessor.getOutputSampleRateHz();
-          encoding = audioProcessor.getOutputEncoding();
+          inputAudioFormat = outputAudioFormat;
         }
       }
+      sampleRate = outputAudioFormat.sampleRate;
+      channelCount = outputAudioFormat.channelCount;
+      encoding = outputAudioFormat.encoding;
     }
 
     int outputChannelConfig = getChannelConfig(channelCount, isInputPcm);
@@ -466,11 +478,7 @@ public final class DefaultAudioSink implements AudioSink {
             processingEnabled,
             canApplyPlaybackParameters,
             availableAudioProcessors);
-    // If we have a pending configuration already, we always drain audio processors as the preceding
-    // configuration may have required it (even if this one doesn't).
-    boolean drainAudioProcessors = flushAudioProcessors || this.pendingConfiguration != null;
-    if (isInitialized()
-        && (!pendingConfiguration.canReuseAudioTrack(configuration) || drainAudioProcessors)) {
+    if (isInitialized()) {
       this.pendingConfiguration = pendingConfiguration;
     } else {
       configuration = pendingConfiguration;
@@ -825,17 +833,12 @@ public final class DefaultAudioSink implements AudioSink {
   }
 
   @Override
-  public PlaybackParameters setPlaybackParameters(PlaybackParameters playbackParameters) {
+  public void setPlaybackParameters(PlaybackParameters playbackParameters) {
     if (configuration != null && !configuration.canApplyPlaybackParameters) {
       this.playbackParameters = PlaybackParameters.DEFAULT;
-      return this.playbackParameters;
+      return;
     }
-    PlaybackParameters lastSetPlaybackParameters =
-        afterDrainPlaybackParameters != null
-            ? afterDrainPlaybackParameters
-            : !playbackParametersCheckpoints.isEmpty()
-                ? playbackParametersCheckpoints.getLast().playbackParameters
-                : this.playbackParameters;
+    PlaybackParameters lastSetPlaybackParameters = getPlaybackParameters();
     if (!playbackParameters.equals(lastSetPlaybackParameters)) {
       if (isInitialized()) {
         // Drain the audio processors so we can determine the frame position at which the new
@@ -847,12 +850,16 @@ public final class DefaultAudioSink implements AudioSink {
         this.playbackParameters = playbackParameters;
       }
     }
-    return this.playbackParameters;
   }
 
   @Override
   public PlaybackParameters getPlaybackParameters() {
-    return playbackParameters;
+    // Mask the already set parameters.
+    return afterDrainPlaybackParameters != null
+        ? afterDrainPlaybackParameters
+        : !playbackParametersCheckpoints.isEmpty()
+            ? playbackParametersCheckpoints.getLast().playbackParameters
+            : playbackParameters;
   }
 
   @Override
@@ -1142,9 +1149,7 @@ public final class DefaultAudioSink implements AudioSink {
       case C.ENCODING_PCM_24BIT:
       case C.ENCODING_PCM_32BIT:
       case C.ENCODING_PCM_8BIT:
-      case C.ENCODING_PCM_A_LAW:
       case C.ENCODING_PCM_FLOAT:
-      case C.ENCODING_PCM_MU_LAW:
       case Format.NO_VALUE:
       default:
         throw new IllegalArgumentException();
@@ -1152,22 +1157,26 @@ public final class DefaultAudioSink implements AudioSink {
   }
 
   private static int getFramesPerEncodedSample(@C.Encoding int encoding, ByteBuffer buffer) {
-    if (encoding == C.ENCODING_DTS || encoding == C.ENCODING_DTS_HD) {
-      return DtsUtil.parseDtsAudioSampleCount(buffer);
-    } else if (encoding == C.ENCODING_AC3) {
-      return Ac3Util.getAc3SyncframeAudioSampleCount();
-    } else if (encoding == C.ENCODING_E_AC3 || encoding == C.ENCODING_E_AC3_JOC) {
-      return Ac3Util.parseEAc3SyncframeAudioSampleCount(buffer);
-    } else if (encoding == C.ENCODING_AC4) {
-      return Ac4Util.parseAc4SyncframeAudioSampleCount(buffer);
-    } else if (encoding == C.ENCODING_DOLBY_TRUEHD) {
-      int syncframeOffset = Ac3Util.findTrueHdSyncframeOffset(buffer);
-      return syncframeOffset == C.INDEX_UNSET
-          ? 0
-          : (Ac3Util.parseTrueHdSyncframeAudioSampleCount(buffer, syncframeOffset)
-              * Ac3Util.TRUEHD_RECHUNK_SAMPLE_COUNT);
-    } else {
-      throw new IllegalStateException("Unexpected audio encoding: " + encoding);
+    switch (encoding) {
+      case C.ENCODING_MP3:
+        return MpegAudioHeader.getFrameSampleCount(buffer.get(buffer.position()));
+      case C.ENCODING_DTS:
+      case C.ENCODING_DTS_HD:
+        return DtsUtil.parseDtsAudioSampleCount(buffer);
+      case C.ENCODING_AC3:
+      case C.ENCODING_E_AC3:
+      case C.ENCODING_E_AC3_JOC:
+        return Ac3Util.parseAc3SyncframeAudioSampleCount(buffer);
+      case C.ENCODING_AC4:
+        return Ac4Util.parseAc4SyncframeAudioSampleCount(buffer);
+      case C.ENCODING_DOLBY_TRUEHD:
+        int syncframeOffset = Ac3Util.findTrueHdSyncframeOffset(buffer);
+        return syncframeOffset == C.INDEX_UNSET
+            ? 0
+            : (Ac3Util.parseTrueHdSyncframeAudioSampleCount(buffer, syncframeOffset)
+                * Ac3Util.TRUEHD_RECHUNK_SAMPLE_COUNT);
+      default:
+        throw new IllegalStateException("Unexpected audio encoding: " + encoding);
     }
   }
 
@@ -1219,7 +1228,6 @@ public final class DefaultAudioSink implements AudioSink {
     audioTrack.setVolume(volume);
   }
 
-  @SuppressWarnings("deprecation")
   private static void setVolumeInternalV3(AudioTrack audioTrack, float volume) {
     audioTrack.setStereoVolume(volume, volume);
   }
