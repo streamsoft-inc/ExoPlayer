@@ -39,6 +39,8 @@ include modulePrefix + 'extension-rtmp'
 include modulePrefix + 'extension-leanback'
 include modulePrefix + 'extension-jobdispatcher'
 include modulePrefix + 'extension-workmanager'
+include modulePrefix + 'extension-mpegh'
+include modulePrefix + 'extension-virtualizer'
 
 project(modulePrefix + 'library').projectDir = new File(rootDir, 'library/all')
 project(modulePrefix + 'library-core').projectDir = new File(rootDir, 'library/core')
@@ -62,3 +64,5 @@ project(modulePrefix + 'extension-rtmp').projectDir = new File(rootDir, 'extensi
 project(modulePrefix + 'extension-leanback').projectDir = new File(rootDir, 'extensions/leanback')
 project(modulePrefix + 'extension-jobdispatcher').projectDir = new File(rootDir, 'extensions/jobdispatcher')
 project(modulePrefix + 'extension-workmanager').projectDir = new File(rootDir, 'extensions/workmanager')
+project(modulePrefix + 'extension-mpegh').projectDir = new File(rootDir, 'extensions/mpegh')
+project(modulePrefix + 'extension-virtualizer').projectDir = new File(rootDir, 'extensions/virtualizer')
