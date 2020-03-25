@@ -157,7 +157,7 @@ public final class MpeghExtractor implements Extractor, SeekMap {
         // 1. find stbl atom, and make sure it contains mha1 with mhaC
          input.resetPeekPosition();
          int bytesSearched = 0;
-         Boolean stblFound = false, mha1Found = false, mhacFound = false;
+         Boolean stblFound = false, mha1Found = false, mhacFound = false, mhm1Found = false;
          ParsableByteArray buffer = new ParsableByteArray(64);
          while (bytesSearched < SEARCH_LENGTH)
          {
@@ -170,7 +170,10 @@ public final class MpeghExtractor implements Extractor, SeekMap {
              else if(stblFound && !mha1Found && atomType == Atom.TYPE_mha1) {
                  mha1Found = true;
              }
-             else if(stblFound && mha1Found && !mhacFound && atomType == Atom.TYPE_mhac ) {
+             else if(stblFound && !mhm1Found && atomType == Atom.TYPE_mhm1) {
+               mhm1Found = true;
+             }
+             else if(stblFound && (mha1Found || mhm1Found) && !mhacFound && atomType == Atom.TYPE_mhac ) {
                  mhacFound = true;
                  break;
              }
