@@ -1192,7 +1192,20 @@ import java.util.List;
             CodecSpecificDataUtil.parseAlacAudioSpecificConfig(initializationData);
         sampleRate = audioSpecificConfig.first;
         channelCount = audioSpecificConfig.second;
+      } else if (childAtomType == Atom.TYPE_mhac) {
+        int mhaC_header_size = 4 /* mhaC size */ + 4 /* mhaC string */ + 3 /* version */ + 2 /* config size */;
+        int mhaC_size = childAtomSize - mhaC_header_size;
+        if (mhaC_size > 0) {
+          channelCount = 2;
+          sampleRate = 48000;
+          initializationData = new byte[mhaC_size];
+          parent.setPosition(childPosition + mhaC_header_size);
+          parent.readBytes(initializationData, 0, mhaC_size);
+        }
       }
+
+
+
       childPosition += childAtomSize;
     }
 
