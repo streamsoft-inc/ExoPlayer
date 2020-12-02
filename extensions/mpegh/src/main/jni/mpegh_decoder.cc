@@ -30,8 +30,8 @@ static constexpr alc_config_t alc_default_config = {
   0x0000,             // ramp_coef = 0dB
   0,                  // ramp_shift = 0dB
   ALC_DELAY_48,
-  ALC_ATT_x48,
-  ALC_REL_x48,
+  0x67D2EC9B, //ALC_ATT_x48,
+  0x7AC6B85A, //ALC_REL_x48,
   (short)0x0000,    // comp_thresh = 0dBFS
   (short)0x8000,    // gate_thresh
   kAmplifyGainDb     // front gain(dB)
