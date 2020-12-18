@@ -49,7 +49,8 @@ typedef struct {
 #define ALC_ATT_x48                0x67d2ec9b
 #define ALC_REL_x44                0x7fff67d3
 #define ALC_REL_x48                0x7fff7430
-
+#define ALC_ATT_TEMP               0x67D2EC9B
+#define ALC_REL_TEMP               0x7AC6B85A
 
 #ifdef __cplusplus
 extern "C" {
