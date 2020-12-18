@@ -31,7 +31,7 @@ android {
                           '-DANDROID_CPP_FEATURES=rtti',
                           '-DANDROID_ARM_NEON=true',
                           '-DANDROID_PLATFORM=android-21',
-                          '-DANDROID_STL=gnustl_static'
+                          '-DANDROID_STL=c++_static'
             }
         }
     }
