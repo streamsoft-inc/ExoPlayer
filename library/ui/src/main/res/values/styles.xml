@@ -56,5 +56,4 @@
     <item name="android:contentDescription">@string/exo_controls_vr_description</item>
   </style>
 
-
 </resources>
