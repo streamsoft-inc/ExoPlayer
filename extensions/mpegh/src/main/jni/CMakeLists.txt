@@ -9,22 +9,29 @@ include_directories(
  )
 
 find_library(log-lib
-             log)
+        log)
 
-add_library(mpegh
-            SHARED
-            mpegh_jni.cc mpegh_decoder.cc)
+add_library(mpeghaudio
+        SHARED
+        mpegh_jni.cc mpegh_decoder.cc
+        virtualizer_jni.cc
+        alc_jni.cc alc.cc)
 
 add_library(SonyIA_mobile STATIC IMPORTED)
 set_target_properties(SonyIA_mobile
-                      PROPERTIES IMPORTED_LOCATION
-                      ${CMAKE_CURRENT_SOURCE_DIR}/mpegh/android-libs/${ANDROID_ABI}/libSonyIA_mobile.a)
+        PROPERTIES IMPORTED_LOCATION
+        ${CMAKE_CURRENT_SOURCE_DIR}/mpegh/android-libs/${ANDROID_ABI}/libSonyIA_mobile.a)
+
+add_library(SonyVirtualizer STATIC IMPORTED)
+set_target_properties(SonyVirtualizer
+        PROPERTIES IMPORTED_LOCATION
+        ${CMAKE_CURRENT_SOURCE_DIR}/mpegh/android-libs/${ANDROID_ABI}/libSiaVirtualizer.a)
 
 add_library(AlcApi STATIC IMPORTED)
 set_target_properties(AlcApi
-                      PROPERTIES IMPORTED_LOCATION
-                      ${CMAKE_CURRENT_SOURCE_DIR}/mpegh/android-libs/${ANDROID_ABI}/libAlcApi.a)
+        PROPERTIES IMPORTED_LOCATION
+        ${CMAKE_CURRENT_SOURCE_DIR}/mpegh/android-libs/${ANDROID_ABI}/libAlcApi.a)
 
 target_link_libraries(
-        mpegh SonyIA_mobile AlcApi ${log-lib}
+        mpeghaudio SonyIA_mobile SonyVirtualizer AlcApi ${log-lib}
 )
