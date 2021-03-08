@@ -1,77 +1,49 @@
-/******************************************************************************
- *
- *    alc.h
- *
- *    Header file for ALC component
- *
- *    (C) Copyright 2019 Sony Corporation All Rights Reserved.
- *
- ******************************************************************************/
+#ifndef EXTENSIONS_ALC_SRC_MAIN_JNI_ALC_H_
+#define EXTENSIONS_ALC_SRC_MAIN_JNI_ALC_H_
 
-#ifndef ALC_H
-#define ALC_H
+#include <stdlib.h>
+#include <memory>
+#include <string>
+#include "alc_component.h"
 
-#ifdef RENAME_SYMBOL
-#include "ALCApi_rename.h"
-#endif
+namespace alc {
 
-typedef struct {
-    unsigned int fs;
-    short        ramp_coef;
-    short        ramp_shift;
-    short        alc_delay;
-    int          alc_att_time;
-    int          alc_rel_time;
-    short        alc_comp_thresh;
-    short        alc_gate_thresh;
-	int          gain;
-} alc_config_t;
+    enum class AlcError {
+        kNoError = 0,
+        kInvalidData,
+        kError,
+    };
 
-//#define ALC_WORKSIZE                 9086
-//#define ALC_WORKSIZE                 17278
-#define ALC_WORKSIZE                 39278
+    class Alc {
+    public:
+        Alc();
 
-#define ALC_SUCCESS                     0
-#define ALC_FAIL_NOINIT              (-1)
-#define ALC_FAIL_ADDR                (-2)
-#define ALC_FAIL_BLOCK_SIZE          (-3)
-#define ALC_FAIL_FS                  (-4)
-#define ALC_FAIL_ALLOC               (-5)
-#define ALC_FAIL_FREE                (-6)
+        ~Alc() = default;
 
-#define ALC_FAIL_ALC_DELAY           (-7)
-#define ALC_FAIL_GAIN                (-8)
+        Alc(const Alc &rhs) = delete;
 
-#define ALC_DELAY_44                  22
-#define ALC_DELAY_48                  24
+        Alc &operator=(const Alc &rhs) = delete;
 
-#define ALC_ATT_x44                0x6b231a90
-#define ALC_ATT_x48                0x67d2ec9b
-#define ALC_REL_x44                0x7fff67d3
-#define ALC_REL_x48                0x7fff7430
-#define ALC_ATT_TEMP               0x67D2EC9B
-#define ALC_REL_TEMP               0x7AC6B85A
+        AlcError ProcFrame(int offset, float *outputBuffer, int *outputSize);
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-int alc_init(
-    void *alc_work_ptr,
-    unsigned int framelength
-);
-int alc_set(
-    void *alc_work_ptr,
-    alc_config_t *alc_config
-);
-int alc_proc(
-    void *alc_work_ptr,
-    float *input,
-    float *output
-);
-int alc_get_version(void);
-int alc_get_worksize(void);
-#ifdef __cplusplus
-}
-#endif
+        struct AlignedAllocDeleter {
+            void operator()(uint8_t *data) const;
+        };
 
-#endif /* ALC_H */
+    private:
+        void PrepareWorkMemory();
+
+        bool Initialize();
+
+        void *GetAlcHandle();
+
+        void PrintAlcParam(const alc_config_t &alc_config);
+
+    private:
+        std::unique_ptr<uint8_t, AlignedAllocDeleter> p_alc_work_area_;
+        bool is_initialized_;
+    };
+
+} //  namespace alc
+
+#endif  // EXTENSIONS_ALC_SRC_MAIN_JNI_ALC_H_

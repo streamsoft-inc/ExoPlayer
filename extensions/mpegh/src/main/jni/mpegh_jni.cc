@@ -40,46 +40,46 @@ extern "C" {
 #define DECODER_FUNC(RETURN_TYPE, NAME, ...)                            \
   extern "C" {                                                          \
     JNIEXPORT RETURN_TYPE                                               \
-    Java_com_google_android_exoplayer2_ext_mpegh_MpeghDecoder_ ## NAME  \
+    Java_com_google_android_exoplayer2_ext_mpeghaudio_MpeghDecoder_ ## NAME  \
     (JNIEnv* env, jobject thiz, ##__VA_ARGS__);                         \
   }                                                                     \
   JNIEXPORT RETURN_TYPE                                                 \
-  Java_com_google_android_exoplayer2_ext_mpegh_MpeghDecoder_ ## NAME    \
+  Java_com_google_android_exoplayer2_ext_mpeghaudio_MpeghDecoder_ ## NAME    \
   (JNIEnv* env, jobject thiz, ##__VA_ARGS__)                            \
 
 #define LIBRARY_FUNC(RETURN_TYPE, NAME, ...)                            \
     extern "C" {                                                        \
       JNIEXPORT RETURN_TYPE                                             \
-      Java_com_google_android_exoplayer2_ext_mpegh_MpeghLibrary_ ## NAME \
+      Java_com_google_android_exoplayer2_ext_mpeghaudio_MpeghLibrary_ ## NAME \
       (JNIEnv* env, jobject thiz, ##__VA_ARGS__);                       \
     }                                                                   \
     JNIEXPORT RETURN_TYPE                                               \
-    Java_com_google_android_exoplayer2_ext_mpegh_MpeghLibrary_ ## NAME  \
+    Java_com_google_android_exoplayer2_ext_mpeghaudio_MpeghLibrary_ ## NAME  \
     (JNIEnv* env, jobject thiz, ##__VA_ARGS__)                          \
 
 using mpegh::MpeghDecoderError;
 using mpegh::MpeghDecoder;
 
 enum MpeghJniError : int {
-  kInvalidData = -1,
-  kErrorOther = -2,
+    kInvalidData = -1,
+    kErrorOther = -2,
 };
 
 enum MpeghCodecType : int {
-  kMha1 = 0,
-  kMhm1 = 1,
+    kMha1 = 0,
+    kMhm1 = 1,
 };
 
 jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   JNIEnv *env;
-  if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+  if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) {
     return -1;
   }
   return JNI_VERSION_1_6;
 }
 
 LIBRARY_FUNC(jstring, MpeghGetVersion) {
-  unsigned int version = sia_mha_getVersion();
+  unsigned int version = sia_mhdr_getVersion();
   unsigned int X = (version >> 16) & 0xFF;
   unsigned int Y = (version >> 8) & 0xFF;
   unsigned int Z = version & 0xFF;
@@ -88,21 +88,15 @@ LIBRARY_FUNC(jstring, MpeghGetVersion) {
   return env->NewStringUTF(stream.str().c_str());
 }
 
-DECODER_FUNC(jlong, MpeghInitialize, jint codecType, jbyteArray extraData,
-             jstring rootPath, jstring configFilePathHrtf,
-             jstring configFilePathCp) {
-  const char *root = env->GetStringUTFChars(rootPath, 0);
-  const char *hrtf = env->GetStringUTFChars(configFilePathHrtf, 0);
-  const char *cp = env->GetStringUTFChars(configFilePathCp, 0);
+DECODER_FUNC(jlong, MpeghInitialize, jint codecType, jbyteArray extraData) {
 
   // mpehg decoder initialize
-  mpegh::MpeghDecoder* decoder = new mpegh::MpeghDecoder(std::string(root),
-                                                         std::string(hrtf),
-                                                         std::string(cp));
+  mpegh::MpeghDecoder *decoder = new mpegh::MpeghDecoder();
   if (codecType == MpeghCodecType::kMha1) {
     jsize config_size = env->GetArrayLength(extraData);
     jbyte *config = env->GetByteArrayElements(extraData, 0);
-    bool ret = decoder->Configure(config_size, reinterpret_cast<uint8_t*>(config));
+    int size = reinterpret_cast<int>(config_size);
+    bool ret = decoder->Configure(size, reinterpret_cast<uint8_t *>(config));
     env->ReleaseByteArrayElements(extraData, config, 0);
     if (ret != true) {
       delete decoder;
@@ -110,15 +104,11 @@ DECODER_FUNC(jlong, MpeghInitialize, jint codecType, jbyteArray extraData,
     }
   }
 
-  env->ReleaseStringUTFChars(rootPath, root);
-  env->ReleaseStringUTFChars(configFilePathHrtf, hrtf);
-  env->ReleaseStringUTFChars(configFilePathCp, cp);
-
-  return (jlong)decoder;
+  return (jlong) decoder;
 }
 
 DECODER_FUNC(jint, MpeghDecode, jlong jHandle, jobject inputData,
-             jint inputSize, jobject outputData, jint outputBufferSize, jboolean isEndOfStream) {
+             jint inputSize, jobject outputData, jint outputBufferSize) {
   if (!jHandle) {
     LOGE("Handler must be non-NULL.");
     return -1;
@@ -132,29 +122,25 @@ DECODER_FUNC(jint, MpeghDecode, jlong jHandle, jobject inputData,
     return -1;
   }
   if (outputBufferSize < MpeghDecoder::GetOutputSamplePerFrame()
-                         *MpeghDecoder::GetOutputChannelCount()
-                         *sizeof(float)) {
+                         * MpeghDecoder::GetOutputChannelCount()
+                         * sizeof(float)) {
     LOGE("Invalid output buffer length: %d", outputBufferSize);
     return -1;
   }
 
-  MpeghDecoder* decoder =
-      reinterpret_cast<MpeghDecoder*>(jHandle);
+  MpeghDecoder *decoder =
+      reinterpret_cast<MpeghDecoder *>(jHandle);
   uint8_t *inputBuffer =
-      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(inputData));
+      reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(inputData));
   float *outputBuffer =
-      reinterpret_cast<float*>(env->GetDirectBufferAddress(outputData));
+      reinterpret_cast<float *>(env->GetDirectBufferAddress(outputData));
   int decodedSize = 0;
 
   MpeghDecoderError ret = MpeghDecoderError::kError;
-  if (isEndOfStream == false) {
-    ret = decoder->Decode(inputBuffer,
-                          inputSize,
-                          outputBuffer,
-                          &decodedSize);
-  } else {
-    ret = decoder->DecodeEos(outputBuffer, &decodedSize);
-  }
+  ret = decoder->Decode(inputBuffer,
+                        inputSize,
+                        outputBuffer,
+                        &decodedSize);
   if (ret == MpeghDecoderError::kError) {
     return MpeghJniError::kErrorOther;
   } else if (ret == MpeghDecoderError::kInvalidData) {
@@ -180,13 +166,13 @@ DECODER_FUNC(jint, MpeghGetSampleRate, jlong jHandle) {
   return MpeghDecoder::GetOutputFrequency();
 }
 
-DECODER_FUNC(jlong, MpeghReset, jlong jHandle, jbyteArray extraData) {
+DECODER_FUNC(jlong, MpeghReset, jlong jHandle) {
   if (!jHandle) {
     LOGE("Handle must be non-NULL.");
     return 0L;
   }
   MpeghDecoder *decoder =
-      reinterpret_cast<MpeghDecoder*>(jHandle);
+      reinterpret_cast<MpeghDecoder *>(jHandle);
   decoder->ResetBuffer();
   return (jlong) jHandle;
 }
@@ -197,7 +183,7 @@ DECODER_FUNC(void, MpeghRelease, jlong jHandle) {
     return;
   }
   MpeghDecoder *decoder =
-      reinterpret_cast<MpeghDecoder*>(jHandle);
+      reinterpret_cast<MpeghDecoder *>(jHandle);
   decoder->ResetDecoder();
   delete decoder;
   return;

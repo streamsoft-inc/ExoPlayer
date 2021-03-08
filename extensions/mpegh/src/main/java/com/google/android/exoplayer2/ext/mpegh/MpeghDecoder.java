@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.ext.mpegh;
 import android.util.Log;
 
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.decoder.DecoderException;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
 import com.google.android.exoplayer2.decoder.SimpleDecoder;
 import com.google.android.exoplayer2.decoder.SimpleOutputBuffer;
@@ -35,11 +36,11 @@ import java.util.List;
  * MPEG-H 3D audio decoder.
  */
 /* package */ final class MpeghDecoder extends
-    SimpleDecoder<DecoderInputBuffer, SimpleOutputBuffer, MpeghDecoderException> {
+    SimpleDecoder<DecoderInputBuffer, SimpleOutputBuffer, DecoderException> {
 
   static private String TAG = "MpeghDecoderClass";
-  // Space for 32 ms of 48 kHz 2 channel 32-bit Float audio.
-  private static final int OUTPUT_BUFFER_SIZE_SINGLE_PRECISION_FLOAT = 32 * 48 * 2 * 4;
+  // Space for 32 ms of 48 kHz 14 channel 32-bit Float audio.
+  private static final int OUTPUT_BUFFER_SIZE_SINGLE_PRECISION_FLOAT = 32 * 48 * 14 * 4;
 
   // Error codes matching mpegh_jni.cc.
   private static final int MPEGH_DECODER_ERROR_INVALID_DATA = -1;
@@ -64,7 +65,6 @@ import java.util.List;
                       int numOutputBuffers,
                       int initialInputBufferSize,
                       String mimeType,
-                      String appRootPath,
                       List<byte[]> initializationData,
                       boolean isOutputFloat)
       throws MpeghDecoderException {
@@ -82,19 +82,12 @@ import java.util.List;
     }
     outputBufferSize = OUTPUT_BUFFER_SIZE_SINGLE_PRECISION_FLOAT;
 
-    // prepare decoder config file manager
-    MpeghDecoderConfigFile configFile = new MpeghDecoderConfigFile(appRootPath);
-    String hrtfConfigFilePath = configFile.getRelativeConfigFilePath(MpeghDecoderConfigFile.CoefType.Hrtf13);
-    String cpConfigFilePath = configFile.getRelativeConfigFilePath(MpeghDecoderConfigFile.CoefType.Cp);
     Log.v(TAG, "MpeghInitialize: ");
 
     // initialize a decoder
     nativeContext = MpeghInitialize(
-            mimeType == MimeTypes.BASE_TYPE_AUDIO + "/mha1" ? MPEGH_DECODER_CODEC_MHA1 : MPEGH_DECODER_CODEC_MHM1,
-            extraData,
-            appRootPath,
-            hrtfConfigFilePath,
-            cpConfigFilePath);
+        mimeType == MimeTypes.AUDIO_MPEGH_MHA1 ? MPEGH_DECODER_CODEC_MHA1 : MPEGH_DECODER_CODEC_MHM1,
+        extraData);
 
     if (nativeContext == 0) {
       throw new MpeghDecoderException("Initialization failed.");
@@ -114,7 +107,7 @@ import java.util.List;
 
   @Override
   protected SimpleOutputBuffer createOutputBuffer() {
-    return new SimpleOutputBuffer(this);
+    return new SimpleOutputBuffer(this::releaseOutputBuffer);
   }
 
   @Override
@@ -137,7 +130,7 @@ import java.util.List;
     }
 
     if (reset) {
-      nativeContext = MpeghReset(nativeContext, extraData);
+      nativeContext = MpeghReset(nativeContext);
       if (nativeContext == 0) {
         return new MpeghDecoderException("Error resetting (see logcat).");
       }
@@ -147,11 +140,15 @@ import java.util.List;
       sampleRate = MpeghGetSampleRate(nativeContext);
       hasOutputFormat = true;
     }
+    if (inputBuffer.isEndOfStream()) {
+      outputBuffer.data.position(0);
+      outputBuffer.data.limit(0);
+      return null;
+    }
 
     ByteBuffer inputData = inputBuffer.data;
     int inputSize = inputData.limit();
-    int result = MpeghDecode(nativeContext, inputData, inputSize, buffer, outputBufferSize,
-                             inputBuffer.isEndOfStream());
+    int result = MpeghDecode(nativeContext, inputData, inputSize, buffer, outputBufferSize);
     if (result == MPEGH_DECODER_ERROR_INVALID_DATA) {
       outputBuffer.data.position(0);
       outputBuffer.data.limit(0);
@@ -163,7 +160,7 @@ import java.util.List;
     buffer.position(0);
 
     if (!isOutputFloat) {
-      boolean ret  = convertFromFloatToInt16(buffer, outputBuffer.data);
+      boolean ret = convertFromFloatToInt16(buffer, outputBuffer.data);
       if (!ret) {
         return new MpeghDecoderException("Error resetting (see logcat).");
       }
@@ -174,18 +171,18 @@ import java.util.List;
 
   private boolean convertFromFloatToInt16(ByteBuffer inputBuffer, ByteBuffer outputBuffer) {
     if (inputBuffer == null || outputBuffer == null ||
-            inputBuffer.remaining()/(Float.BYTES/Short.BYTES) >
-                    outputBuffer.capacity() - outputBuffer.position()) {
+        inputBuffer.remaining() / (Float.BYTES / Short.BYTES) >
+            outputBuffer.capacity() - outputBuffer.position()) {
       return false;
     }
 
-    while(inputBuffer.hasRemaining()) {
+    while (inputBuffer.hasRemaining()) {
       float fsample = inputBuffer.getFloat();
       short isample;
       fsample = fsample * 0x8000;
       fsample = Math.round(fsample);
-      if( fsample > 0x7999 ) fsample = 0x7999;
-      if( fsample < -0x8000 ) fsample = -0x8000;
+      if (fsample > 0x7999) fsample = 0x7999;
+      if (fsample < -0x8000) fsample = -0x8000;
       isample = (short) fsample;
       outputBuffer.putShort(isample);
     }
@@ -202,14 +199,14 @@ import java.util.List;
   }
 
   /**
-   * Returns the channel count of output audio. May only be called after {@link #decode}.
+   * Returns the channel count of output audio. May only be called after {@link #decode(DecoderInputBuffer inputBuffer, SimpleOutputBuffer outputBuffer, boolean reset)}.
    */
   public int getChannelCount() {
     return channelCount;
   }
 
   /**
-   * Returns the sample rate of output audio. May only be called after {@link #decode}.
+   * Returns the sample rate of output audio. May only be called after {@link #decode(DecoderInputBuffer inputBuffer, SimpleOutputBuffer outputBuffer, boolean reset)}.
    */
   public int getSampleRate() {
     return sampleRate;
@@ -228,7 +225,7 @@ import java.util.List;
    */
   private static byte[] getExtraData(String mimeType, List<byte[]> initializationData) {
     switch (mimeType) {
-      case (MimeTypes.BASE_TYPE_AUDIO + "/mha1"):
+      case MimeTypes.AUDIO_MPEGH_MHA1:
         return initializationData.get(0);
       default:
         // Other codecs do not require extra data.
@@ -236,12 +233,17 @@ import java.util.List;
     }
   }
 
-  private native long MpeghInitialize(int codecType, byte[] extraData, String rootPath, String fnameCoef1, String fnameCoef2);
-  private native int  MpeghDecode(long context, ByteBuffer inputData, int inputSize,
-                                  ByteBuffer outputBuffer, int outputBufferSize, boolean isEndOsStream);
-  private native int  MpeghGetChannelCount(long context);
-  private native int  MpeghGetSampleRate(long context);
-  private native long MpeghReset(long context, byte[] extraData);
+  private native long MpeghInitialize(int codecType, byte[] extraData);
+
+  private native int MpeghDecode(long context, ByteBuffer inputData, int inputSize,
+                                 ByteBuffer outputBuffer, int outputBufferSize);
+
+  private native int MpeghGetChannelCount(long context);
+
+  private native int MpeghGetSampleRate(long context);
+
+  private native long MpeghReset(long context);
+
   private native void MpeghRelease(long context);
 
 }

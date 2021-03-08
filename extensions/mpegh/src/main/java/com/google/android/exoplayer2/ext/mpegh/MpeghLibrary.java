@@ -44,7 +44,7 @@ public final class MpeghLibrary {
    *
    * @param libraries The names of the mpegh native libraries.
    */
-  public static void setLibraries(String... libraries)  {
+  public static void setLibraries(String... libraries) {
     LOADER.setLibraries(libraries);
   }
 
@@ -79,7 +79,8 @@ public final class MpeghLibrary {
   /**
    * Returns the name of the mpegh decoder that could be used to decode {@code mimeType}.
    */
-  /* package */ static String getCodecName(String mimeType) {
+  /* package */
+  static String getCodecName(String mimeType) {
     switch (mimeType) {
       case (MimeTypes.BASE_TYPE_AUDIO + "/mha1") :
         return "mpegh3d.mha1";

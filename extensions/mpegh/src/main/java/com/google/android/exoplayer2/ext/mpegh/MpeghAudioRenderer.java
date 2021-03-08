@@ -16,94 +16,75 @@
 package com.google.android.exoplayer2.ext.mpegh;
 
 import android.os.Handler;
-
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.audio.AudioProcessor;
 import com.google.android.exoplayer2.audio.AudioRendererEventListener;
 import com.google.android.exoplayer2.audio.AudioSink;
+import com.google.android.exoplayer2.audio.DecoderAudioRenderer;
 import com.google.android.exoplayer2.audio.DefaultAudioSink;
-import com.google.android.exoplayer2.audio.SimpleDecoderAudioRenderer;
-import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
+import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
+import com.google.android.exoplayer2.util.TraceUtil;
+import com.google.android.exoplayer2.util.Util;
 
 //--------------------------------------------------------------------//
 // IA decoder impl
 //--------------------------------------------------------------------//
 
-/**
- * Decodes and renders audio using MPEG-H Music Profile.
- */
-public final class MpeghAudioRenderer extends SimpleDecoderAudioRenderer {
+/** Decodes and renders audio using MPEG-H Music Profile. */
+public final class MpeghAudioRenderer extends DecoderAudioRenderer<MpeghDecoder> {
 
-  /**
-   * The number of input and output buffers.
-   */
+  private static final String TAG = "MpeghAudioRenderer";
+
+  /** The number of input and output buffers. */
   private static final int NUM_BUFFERS = 16;
-  /**
-   * The initial input buffer size. Input buffers are reallocated dynamically if this value is
-   * insufficient.
-   */
-  private static final int INITIAL_INPUT_BUFFER_SIZE = 960 * 6; // ToDo : check buffer size
+  /** The default input buffer size. */
+  private static final int DEFAULT_INPUT_BUFFER_SIZE = 960 * 6;
 
-  private MpeghDecoder decoder;
-  private static String appRootPath;
-  private boolean outputFloat;
-
-  public MpeghAudioRenderer() {
-    this(null, null, null, false);
-  }
+  private final boolean enableFloatOutput;
 
   /**
+   * Creates a new instance.
+   *
    * @param eventHandler A handler to use when delivering events to {@code eventListener}. May be
    *     null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
    * @param appRootPath A file path of application root (Context.getFilesDir().getParent()).
-   * @param outputFloat Output encoding setting. ture:32bit float / false:16bit integer
-   * @param audioProcessors Optional {@link AudioProcessor}s that will process audio before output.
+   * @param enableFloatOutput Output encoding setting. ture:32bit float / false:16bit integer
    */
-  public MpeghAudioRenderer(Handler eventHandler,
-                            AudioRendererEventListener eventListener,
-                            String appRootPath,
-                            boolean outputFloat,
-                            AudioProcessor... audioProcessors) {
-    this(eventHandler, eventListener, appRootPath, outputFloat, new DefaultAudioSink(null, audioProcessors));
-  }
-
-  /**
-   * @param eventHandler A handler to use when delivering events to {@code eventListener}. May be
-   *     null if delivery of events is not required.
-   * @param eventListener A listener of events. May be null if delivery of events is not required.
-   * @param appRootPath A file path of application root (Context.getFilesDir().getParent()).
-   * @param outputFloat Output encoding setting. ture:32bit float / false:16bit integer
-   * @param audioSink The sink to which audio will be output.
-   */
-  public MpeghAudioRenderer(Handler eventHandler,
-                            AudioRendererEventListener eventListener,
-                            String appRootPath,
-                            boolean outputFloat,
-                            AudioSink audioSink) {
+  public MpeghAudioRenderer(
+      @Nullable Handler eventHandler,
+      @Nullable AudioRendererEventListener eventListener,
+      String appRootPath,
+      boolean enableFloatOutput) {
     super(
         eventHandler,
         eventListener,
-        /* drmSessionManager= */ null,
-        /* playClearSamplesWithoutKeys= */ false,
-        audioSink);
-    this.appRootPath = appRootPath;
-    this.outputFloat = outputFloat;
+        enableFloatOutput == true
+            ? new MpeghAudioSink(new MpeghAudioSink.DefaultAudioProcessorChain(), appRootPath, false, false)
+            : new DefaultAudioSink(null, new DefaultAudioSink.DefaultAudioProcessorChain(), false, false, false));
+    this.enableFloatOutput = enableFloatOutput;
   }
 
   @Override
-  protected int supportsFormatInternal(DrmSessionManager<ExoMediaCrypto> drmSessionManager,
-      Format format) {
-    String sampleMimeType = format.sampleMimeType;
-    if (!MpeghLibrary.isAvailable() || !MimeTypes.isAudio(sampleMimeType)) {
+  public String getName() {
+    return TAG;
+  }
+
+  @Override
+  @FormatSupport
+  protected int supportsFormatInternal(Format format) {
+    String mimeType = Assertions.checkNotNull(format.sampleMimeType);
+    if (!MpeghLibrary.isAvailable() || !MimeTypes.isAudio(mimeType)) {
       return FORMAT_UNSUPPORTED_TYPE;
-    } else if (!MpeghLibrary.supportsFormat(sampleMimeType)) {
+    } else if (!MpeghLibrary.supportsFormat(mimeType)
+        || (!sinkSupportsFormat(format, C.ENCODING_PCM_16BIT)
+            && !sinkSupportsFormat(format, C.ENCODING_PCM_FLOAT))) {
       return FORMAT_UNSUPPORTED_SUBTYPE;
-    } else if (!supportsFormatDrm(drmSessionManager, format.drmInitData)) {
+    } else if (format.exoMediaCryptoType != null) {
       return FORMAT_UNSUPPORTED_DRM;
     } else {
       return FORMAT_HANDLED;
@@ -111,25 +92,43 @@ public final class MpeghAudioRenderer extends SimpleDecoderAudioRenderer {
   }
 
   @Override
-  public final int supportsMixedMimeTypeAdaptation() throws ExoPlaybackException {
+  @AdaptiveSupport
+  public final int supportsMixedMimeTypeAdaptation() {
     return ADAPTIVE_NOT_SEAMLESS;
   }
 
   @Override
-  protected MpeghDecoder createDecoder(Format format, ExoMediaCrypto mediaCrypto)
+  protected MpeghDecoder createDecoder(Format format, @Nullable ExoMediaCrypto mediaCrypto)
       throws MpeghDecoderException {
-    decoder = new MpeghDecoder(NUM_BUFFERS, NUM_BUFFERS, INITIAL_INPUT_BUFFER_SIZE,
-        format.sampleMimeType, appRootPath, format.initializationData, outputFloat);
+    TraceUtil.beginSection("createMpeghDecoder");
+    int initialInputBufferSize =
+        DEFAULT_INPUT_BUFFER_SIZE;
+    MpeghDecoder decoder =
+        new MpeghDecoder(
+            NUM_BUFFERS, NUM_BUFFERS, initialInputBufferSize,
+            format.sampleMimeType, format.initializationData, enableFloatOutput);
+    TraceUtil.endSection();
     return decoder;
   }
 
   @Override
-  public Format getOutputFormat() {
-    int channelCount = decoder.getChannelCount();
-    int sampleRate = decoder.getSampleRate();
-    @C.PcmEncoding int encoding = decoder.getEncoding();
-    return Format.createAudioSampleFormat(null, MimeTypes.AUDIO_RAW, null, Format.NO_VALUE,
-        Format.NO_VALUE, channelCount, sampleRate, encoding, null, null, 0, null);
+  public Format getOutputFormat(MpeghDecoder decoder) {
+    Assertions.checkNotNull(decoder);
+    return new Format.Builder()
+        .setSampleMimeType(MimeTypes.AUDIO_RAW)
+        .setChannelCount(decoder.getChannelCount())
+        .setSampleRate(decoder.getSampleRate())
+        .setPcmEncoding(decoder.getEncoding())
+        .build();
+  }
+
+  /**
+   * Returns whether the renderer's {@link AudioSink} supports the PCM format that will be output
+   * from the decoder for the given input format and requested output encoding.
+   */
+  private boolean sinkSupportsFormat(Format inputFormat, @C.PcmEncoding int pcmEncoding) {
+    return sinkSupportsFormat(
+        Util.getPcmFormat(pcmEncoding, inputFormat.channelCount, inputFormat.sampleRate));
   }
 
 }

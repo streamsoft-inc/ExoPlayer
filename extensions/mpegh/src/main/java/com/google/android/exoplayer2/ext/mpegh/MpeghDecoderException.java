@@ -15,7 +15,7 @@
  */
 package com.google.android.exoplayer2.ext.mpegh;
 
-import com.google.android.exoplayer2.audio.AudioDecoderException;
+import com.google.android.exoplayer2.decoder.DecoderException;
 
 //--------------------------------------------------------------------//
 // IA decoder impl
@@ -24,7 +24,7 @@ import com.google.android.exoplayer2.audio.AudioDecoderException;
 /**
  * Thrown when an mpegh decoder error occurs.
  */
-public final class MpeghDecoderException extends AudioDecoderException {
+public final class MpeghDecoderException extends DecoderException {
 
   /* package */ MpeghDecoderException(String message) {
     super(message);
