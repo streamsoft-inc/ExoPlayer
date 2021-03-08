@@ -233,7 +233,25 @@ import java.util.List;
     long timestampTimeUnits = 0;
     long duration;
 
-    if (!isFixedSampleSizeRawAudio) {
+    if (isFixedSampleSizeRawAudio) {
+      long[] chunkOffsetsBytes = new long[chunkIterator.length];
+      int[] chunkSampleCounts = new int[chunkIterator.length];
+      while (chunkIterator.moveNext()) {
+        chunkOffsetsBytes[chunkIterator.index] = chunkIterator.offset;
+        chunkSampleCounts[chunkIterator.index] = chunkIterator.numSamples;
+      }
+      int fixedSampleSize =
+          Util.getPcmFrameSize(track.format.pcmEncoding, track.format.channelCount);
+      FixedSampleSizeRechunker.Results rechunkedResults =
+          FixedSampleSizeRechunker.rechunk(
+              fixedSampleSize, chunkOffsetsBytes, chunkSampleCounts, timestampDeltaInTimeUnits);
+      offsets = rechunkedResults.offsets;
+      sizes = rechunkedResults.sizes;
+      maximumSize = rechunkedResults.maximumSize;
+      timestamps = rechunkedResults.timestamps;
+      flags = rechunkedResults.flags;
+      duration = rechunkedResults.duration;
+    } else {
       offsets = new long[sampleCount];
       sizes = new int[sampleCount];
       timestamps = new long[sampleCount];
@@ -343,23 +361,6 @@ import java.util.List;
                 + remainingSamplesAtTimestampOffset
                 + (!isCttsValid ? ", ctts invalid" : ""));
       }
-    } else {
-      long[] chunkOffsetsBytes = new long[chunkIterator.length];
-      int[] chunkSampleCounts = new int[chunkIterator.length];
-      while (chunkIterator.moveNext()) {
-        chunkOffsetsBytes[chunkIterator.index] = chunkIterator.offset;
-        chunkSampleCounts[chunkIterator.index] = chunkIterator.numSamples;
-      }
-      int fixedSampleSize =
-          Util.getPcmFrameSize(track.format.pcmEncoding, track.format.channelCount);
-      FixedSampleSizeRechunker.Results rechunkedResults = FixedSampleSizeRechunker.rechunk(
-          fixedSampleSize, chunkOffsetsBytes, chunkSampleCounts, timestampDeltaInTimeUnits);
-      offsets = rechunkedResults.offsets;
-      sizes = rechunkedResults.sizes;
-      maximumSize = rechunkedResults.maximumSize;
-      timestamps = rechunkedResults.timestamps;
-      flags = rechunkedResults.flags;
-      duration = rechunkedResults.duration;
     }
     long durationUs = Util.scaleLargeTimestamp(duration, C.MICROS_PER_SECOND, track.timescale);
 
@@ -1203,10 +1204,11 @@ import java.util.List;
         if (mhaC_size > 0) {
           channelCount = 2;
           sampleRate = 48000;
-          initializationData = new byte[mhaC_size];
+          byte[] initializationDataBytes = new byte[mhaC_size];
           parent.setPosition(childPosition + mhaC_header_size);
-          parent.readBytes(initializationData, 0, mhaC_size);
-      }
+          parent.readBytes(initializationDataBytes, 0, mhaC_size);
+          initializationData = Arrays.copyOf(initializationDataBytes, mhaC_size);
+        }
       }
 
 

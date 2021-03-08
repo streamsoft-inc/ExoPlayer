@@ -38,8 +38,8 @@ import java.util.List;
     SimpleDecoder<DecoderInputBuffer, SimpleOutputBuffer, MpeghDecoderException> {
 
   static private String TAG = "MpeghDecoderClass";
-  // Space for 32 ms of 48 kHz 2 channel 32-bit Float audio.
-  private static final int OUTPUT_BUFFER_SIZE_SINGLE_PRECISION_FLOAT = 32 * 48 * 2 * 4;
+  // Space for 32 ms of 48 kHz 14 channel 32-bit Float audio.
+  private static final int OUTPUT_BUFFER_SIZE_SINGLE_PRECISION_FLOAT = 32 * 48 * 14 * 4;
 
   // Error codes matching mpegh_jni.cc.
   private static final int MPEGH_DECODER_ERROR_INVALID_DATA = -1;
@@ -64,7 +64,6 @@ import java.util.List;
                       int numOutputBuffers,
                       int initialInputBufferSize,
                       String mimeType,
-                      String appRootPath,
                       List<byte[]> initializationData,
                       boolean isOutputFloat)
       throws MpeghDecoderException {
@@ -83,18 +82,15 @@ import java.util.List;
     outputBufferSize = OUTPUT_BUFFER_SIZE_SINGLE_PRECISION_FLOAT;
 
     // prepare decoder config file manager
-    MpeghDecoderConfigFile configFile = new MpeghDecoderConfigFile(appRootPath);
-    String hrtfConfigFilePath = configFile.getRelativeConfigFilePath(MpeghDecoderConfigFile.CoefType.Hrtf13);
-    String cpConfigFilePath = configFile.getRelativeConfigFilePath(MpeghDecoderConfigFile.CoefType.Cp);
+//    MpeghDecoderConfigFile configFile = new MpeghDecoderConfigFile(appRootPath);
+//    String hrtfConfigFilePath = configFile.getRelativeConfigFilePath(MpeghDecoderConfigFile.CoefType.Hrtf13);
+//    String cpConfigFilePath = configFile.getRelativeConfigFilePath(MpeghDecoderConfigFile.CoefType.Cp);
     Log.v(TAG, "MpeghInitialize: ");
 
     // initialize a decoder
     nativeContext = MpeghInitialize(
             mimeType == MimeTypes.BASE_TYPE_AUDIO + "/mha1" ? MPEGH_DECODER_CODEC_MHA1 : MPEGH_DECODER_CODEC_MHM1,
-            extraData,
-            appRootPath,
-            hrtfConfigFilePath,
-            cpConfigFilePath);
+            extraData);
 
     if (nativeContext == 0) {
       throw new MpeghDecoderException("Initialization failed.");
@@ -137,7 +133,7 @@ import java.util.List;
     }
 
     if (reset) {
-      nativeContext = MpeghReset(nativeContext, extraData);
+      nativeContext = MpeghReset(nativeContext);
       if (nativeContext == 0) {
         return new MpeghDecoderException("Error resetting (see logcat).");
       }
@@ -147,11 +143,15 @@ import java.util.List;
       sampleRate = MpeghGetSampleRate(nativeContext);
       hasOutputFormat = true;
     }
+    if (inputBuffer.isEndOfStream()) {
+      outputBuffer.data.position(0);
+      outputBuffer.data.limit(0);
+      return null;
+    }
 
     ByteBuffer inputData = inputBuffer.data;
     int inputSize = inputData.limit();
-    int result = MpeghDecode(nativeContext, inputData, inputSize, buffer, outputBufferSize,
-                             inputBuffer.isEndOfStream());
+    int result = MpeghDecode(nativeContext, inputData, inputSize, buffer, outputBufferSize);
     if (result == MPEGH_DECODER_ERROR_INVALID_DATA) {
       outputBuffer.data.position(0);
       outputBuffer.data.limit(0);
@@ -236,12 +236,15 @@ import java.util.List;
     }
   }
 
-  private native long MpeghInitialize(int codecType, byte[] extraData, String rootPath, String fnameCoef1, String fnameCoef2);
+  private native long MpeghInitialize(int codecType, byte[] extraData);
   private native int  MpeghDecode(long context, ByteBuffer inputData, int inputSize,
-                                  ByteBuffer outputBuffer, int outputBufferSize, boolean isEndOsStream);
+                                  ByteBuffer outputBuffer, int outputBufferSize);
   private native int  MpeghGetChannelCount(long context);
+
   private native int  MpeghGetSampleRate(long context);
-  private native long MpeghReset(long context, byte[] extraData);
+
+  private native long MpeghReset(long context);
+
   private native void MpeghRelease(long context);
 
 }

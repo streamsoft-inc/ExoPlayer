@@ -175,6 +175,8 @@ MpeghDecoderError MpeghDecoder::Decode(uint8_t *inputBuffer, int inputSize,
 MpeghDecoderError
 MpeghDecoder::WriteFrame(int *isLastFrame, uint8_t *inputBuffer, int inputSize) {
   int result = 0;
+
+
   if (is_codec_mha1_) {
     result = sia_mhdr_rawbsReadFrame(handle_,
                                      inputBuffer, inputSize, isLastFrame);
@@ -182,6 +184,8 @@ MpeghDecoder::WriteFrame(int *isLastFrame, uint8_t *inputBuffer, int inputSize) 
     result = sia_mhdr_bsReadFrame(handle_,
                                   inputBuffer, inputSize, isLastFrame);
   }
+  LOGI("ANDRIJA WriteFrame : %d %d %d", result, is_codec_mha1_, inputSize);
+
   if (result) {
     if (is_codec_mha1_) {
       LOGE("sia_mhdr_rawbsReadFrame : %d", result);
@@ -199,6 +203,8 @@ MpeghDecoder::WriteFrame(int *isLastFrame, uint8_t *inputBuffer, int inputSize) 
 MpeghDecoderError MpeghDecoder::ReadFrame(int *outputSize, float *outputBuffer,
                                           int *is_last_frame, int *pFlagPost) {
 
+  LOGE("ANDRIJA : %d %d", kSamplePerFrame, kNumberOfChannels);
+
   float temp_buff_planar[kSamplePerFrame * kNumberOfChannels];
   float *p_pcm_out[kNumberOfChannels];
   for (int idx = 0; idx < kNumberOfChannels; ++idx) {
@@ -210,8 +216,11 @@ MpeghDecoderError MpeghDecoder::ReadFrame(int *outputSize, float *outputBuffer,
     LOGE("sia_mhdr_procFrame : %d", result);
     return MpeghDecoderError::kError;
   }
+
   interleave(outputBuffer, temp_buff_planar, kSamplePerFrame, kNumberOfChannels);
   *outputSize = kSamplePerFrame * kNumberOfChannels * sizeof(float);
+
+  LOGE("ANDRIJA 2: %d %d", result, *outputSize);
   return MpeghDecoderError::kNoError;
 }
 

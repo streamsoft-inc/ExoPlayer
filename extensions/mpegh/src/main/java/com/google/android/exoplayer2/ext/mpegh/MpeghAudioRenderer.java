@@ -28,6 +28,7 @@ import com.google.android.exoplayer2.audio.SimpleDecoderAudioRenderer;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
 import com.google.android.exoplayer2.util.MimeTypes;
+import com.google.android.exoplayer2.util.Util;
 
 //--------------------------------------------------------------------//
 // IA decoder impl
@@ -52,9 +53,6 @@ public final class MpeghAudioRenderer extends SimpleDecoderAudioRenderer {
   private static String appRootPath;
   private boolean outputFloat;
 
-  public MpeghAudioRenderer() {
-    this(null, null, null, false);
-  }
 
   /**
    * @param eventHandler A handler to use when delivering events to {@code eventListener}. May be
@@ -62,35 +60,20 @@ public final class MpeghAudioRenderer extends SimpleDecoderAudioRenderer {
    * @param eventListener A listener of events. May be null if delivery of events is not required.
    * @param appRootPath A file path of application root (Context.getFilesDir().getParent()).
    * @param outputFloat Output encoding setting. ture:32bit float / false:16bit integer
-   * @param audioProcessors Optional {@link AudioProcessor}s that will process audio before output.
+   *
    */
   public MpeghAudioRenderer(Handler eventHandler,
                             AudioRendererEventListener eventListener,
                             String appRootPath,
-                            boolean outputFloat,
-                            AudioProcessor... audioProcessors) {
-    this(eventHandler, eventListener, appRootPath, outputFloat, new DefaultAudioSink(null, audioProcessors));
-  }
-
-  /**
-   * @param eventHandler A handler to use when delivering events to {@code eventListener}. May be
-   *     null if delivery of events is not required.
-   * @param eventListener A listener of events. May be null if delivery of events is not required.
-   * @param appRootPath A file path of application root (Context.getFilesDir().getParent()).
-   * @param outputFloat Output encoding setting. ture:32bit float / false:16bit integer
-   * @param audioSink The sink to which audio will be output.
-   */
-  public MpeghAudioRenderer(Handler eventHandler,
-                            AudioRendererEventListener eventListener,
-                            String appRootPath,
-                            boolean outputFloat,
-                            AudioSink audioSink) {
+                            boolean outputFloat) {
     super(
         eventHandler,
         eventListener,
         /* drmSessionManager= */ null,
         /* playClearSamplesWithoutKeys= */ false,
-        audioSink);
+        outputFloat == true
+            ? new MpeghAudioSink(new MpeghAudioSink.DefaultAudioProcessorChain(), appRootPath)
+            : new DefaultAudioSink(null, new DefaultAudioSink.DefaultAudioProcessorChain(), false));
     this.appRootPath = appRootPath;
     this.outputFloat = outputFloat;
   }
@@ -103,12 +86,13 @@ public final class MpeghAudioRenderer extends SimpleDecoderAudioRenderer {
       return FORMAT_UNSUPPORTED_TYPE;
     } else if (!MpeghLibrary.supportsFormat(sampleMimeType)) {
       return FORMAT_UNSUPPORTED_SUBTYPE;
-    } else if (!supportsFormatDrm(drmSessionManager, format.drmInitData)) {
+    } else if (format.exoMediaCryptoType != null) {
       return FORMAT_UNSUPPORTED_DRM;
     } else {
       return FORMAT_HANDLED;
     }
   }
+
 
   @Override
   public final int supportsMixedMimeTypeAdaptation() throws ExoPlaybackException {
@@ -119,7 +103,7 @@ public final class MpeghAudioRenderer extends SimpleDecoderAudioRenderer {
   protected MpeghDecoder createDecoder(Format format, ExoMediaCrypto mediaCrypto)
       throws MpeghDecoderException {
     decoder = new MpeghDecoder(NUM_BUFFERS, NUM_BUFFERS, INITIAL_INPUT_BUFFER_SIZE,
-        format.sampleMimeType, appRootPath, format.initializationData, outputFloat);
+        format.sampleMimeType, format.initializationData, outputFloat);
     return decoder;
   }
 
