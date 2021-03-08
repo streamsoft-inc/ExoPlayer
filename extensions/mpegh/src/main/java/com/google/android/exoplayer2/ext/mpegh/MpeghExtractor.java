@@ -15,7 +15,7 @@
  */
 package com.google.android.exoplayer2.ext.mpegh;
 
-import static com.google.android.exoplayer2.extractor.mp4.AtomParsers.parseTraks;
+import static com.google.android.exoplayer2.ext.mpegh.AtomParsers.parseTraks;
 import static com.google.android.exoplayer2.util.Assertions.checkNotNull;
 import static com.google.android.exoplayer2.util.Util.castNonNull;
 import static java.lang.Math.max;
@@ -36,7 +36,8 @@ import com.google.android.exoplayer2.extractor.PositionHolder;
 import com.google.android.exoplayer2.extractor.SeekMap;
 import com.google.android.exoplayer2.extractor.SeekPoint;
 import com.google.android.exoplayer2.extractor.TrackOutput;
-import com.google.android.exoplayer2.extractor.mp4.Atom.ContainerAtom;
+import com.google.android.exoplayer2.ext.mpegh.Atom.ContainerAtom;
+import com.google.android.exoplayer2.extractor.mp4.Mp4Extractor;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
@@ -100,6 +101,8 @@ public final class MpeghExtractor implements Extractor, SeekMap {
    */
   private static final long MAXIMUM_READ_AHEAD_BYTES_STREAM = 10 * 1024 * 1024;
 
+  private static final int SEARCH_LENGTH = 20 * 1024;
+
   private final @Flags int flags;
 
   // Temporary arrays.
@@ -156,7 +159,7 @@ public final class MpeghExtractor implements Extractor, SeekMap {
   }
 
   @Override
-  public boolean sniff(ExtractorInput input) throws IOException, InterruptedException {
+  public boolean sniff(ExtractorInput input) throws IOException {
      boolean snif = Sniffer.sniffUnfragmented(input);
      if( snif ) {
         // ok this is mp4 format, let's check do we have needed Sony atoms?
@@ -179,7 +182,7 @@ public final class MpeghExtractor implements Extractor, SeekMap {
              else if(stblFound && !mhm1Found && atomType == Atom.TYPE_mhm1) {
                mhm1Found = true;
              }
-             else if(stblFound && (mha1Found || mhm1Found) && !mhacFound && atomType == Atom.TYPE_mhac ) {
+             else if(stblFound && (mha1Found || mhm1Found) && !mhacFound && atomType == Atom.TYPE_mhaC ) {
                  mhacFound = true;
                  break;
              }
