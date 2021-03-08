@@ -40,21 +40,21 @@ extern "C" {
 #define DECODER_FUNC(RETURN_TYPE, NAME, ...)                            \
   extern "C" {                                                          \
     JNIEXPORT RETURN_TYPE                                               \
-    Java_com_google_android_exoplayer2_ext_mpeghaudio_MpeghDecoder_ ## NAME  \
+    Java_com_google_android_exoplayer2_ext_mpegh_MpeghDecoder_ ## NAME  \
     (JNIEnv* env, jobject thiz, ##__VA_ARGS__);                         \
   }                                                                     \
   JNIEXPORT RETURN_TYPE                                                 \
-  Java_com_google_android_exoplayer2_ext_mpeghaudio_MpeghDecoder_ ## NAME    \
+  Java_com_google_android_exoplayer2_ext_mpegh_MpeghDecoder_ ## NAME    \
   (JNIEnv* env, jobject thiz, ##__VA_ARGS__)                            \
 
 #define LIBRARY_FUNC(RETURN_TYPE, NAME, ...)                            \
     extern "C" {                                                        \
       JNIEXPORT RETURN_TYPE                                             \
-      Java_com_google_android_exoplayer2_ext_mpeghaudio_MpeghLibrary_ ## NAME \
+      Java_com_google_android_exoplayer2_ext_mpegh_MpeghLibrary_ ## NAME \
       (JNIEnv* env, jobject thiz, ##__VA_ARGS__);                       \
     }                                                                   \
     JNIEXPORT RETURN_TYPE                                               \
-    Java_com_google_android_exoplayer2_ext_mpeghaudio_MpeghLibrary_ ## NAME  \
+    Java_com_google_android_exoplayer2_ext_mpegh_MpeghLibrary_ ## NAME  \
     (JNIEnv* env, jobject thiz, ##__VA_ARGS__)                          \
 
 using mpegh::MpeghDecoderError;
