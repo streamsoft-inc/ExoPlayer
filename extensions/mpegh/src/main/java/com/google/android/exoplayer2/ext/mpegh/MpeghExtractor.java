@@ -171,7 +171,7 @@ public final class MpeghExtractor implements Extractor, SeekMap {
          while (bytesSearched < SEARCH_LENGTH)
          {
              buffer.reset(Atom.HEADER_SIZE);
-             input.peekFully(buffer.data, 0, Atom.HEADER_SIZE);
+             input.peekFully(buffer.getData(), 0, Atom.HEADER_SIZE);
              int atomType = buffer.readInt();
              if (!stblFound && atomType == Atom.TYPE_stbl) {
                  stblFound = true;

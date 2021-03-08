@@ -17,6 +17,17 @@ apply plugin: 'com.android.library'
 android {
     compileSdkVersion project.ext.compileSdkVersion
 
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    defaultConfig {
+        minSdkVersion project.ext.minSdkVersion
+        targetSdkVersion project.ext.targetSdkVersion
+        consumerProguardFiles 'proguard-rules.txt'
+    }
+
     defaultConfig {
         minSdkVersion project.ext.minSdkVersion
         targetSdkVersion project.ext.targetSdkVersion
@@ -41,15 +52,20 @@ android {
             path "src/main/jni/CMakeLists.txt"
         }
     }
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
-    }
 }
 
 dependencies {
-    implementation 'androidx.annotation:annotation:1.1.0'
+    implementation 'androidx.annotation:annotation:' + androidxAnnotationVersion
     implementation project(modulePrefix + 'library-core')
+    compileOnly 'org.checkerframework:checker-qual:' + checkerframeworkVersion
+    compileOnly 'org.checkerframework:checker-compat-qual:' + checkerframeworkCompatVersion
+    implementation ('com.google.guava:guava:' + guavaVersion) {
+        exclude group: 'com.google.code.findbugs', module: 'jsr305'
+        exclude group: 'org.checkerframework', module: 'checker-compat-qual'
+        exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
+        exclude group: 'com.google.j2objc', module: 'j2objc-annotations'
+        exclude group: 'org.codehaus.mojo', module: 'animal-sniffer-annotations'
+    }
 }
 
 ext {
