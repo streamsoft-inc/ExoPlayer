@@ -15,14 +15,18 @@
  */
 package com.google.android.exoplayer2.audio;
 
+import static java.lang.Math.min;
+
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 import java.nio.ByteBuffer;
 
 /** Audio processor for trimming samples from the start/end of data. */
-/* package */ final class TrimmingAudioProcessor extends BaseAudioProcessor {
+/* package */ final public class TrimmingAudioProcessor extends BaseAudioProcessor {
 
   @C.PcmEncoding private static final int OUTPUT_ENCODING = C.ENCODING_PCM_16BIT;
+  @C.PcmEncoding private static final int OUTPUT_ENCODING_FLOAT = C.ENCODING_PCM_FLOAT;
 
   private int trimStartFrames;
   private int trimEndFrames;
@@ -45,11 +49,12 @@ import java.nio.ByteBuffer;
    *
    * @param trimStartFrames The number of audio frames to trim from the start of audio.
    * @param trimEndFrames The number of audio frames to trim from the end of audio.
-   * @see AudioSink#configure(int, int, int, int, int[], int, int)
+   * @see AudioSink#configure(com.google.android.exoplayer2.Format, int, int[])
    */
   public void setTrimFrameCount(int trimStartFrames, int trimEndFrames) {
     this.trimStartFrames = trimStartFrames;
     this.trimEndFrames = trimEndFrames;
+    Log.d("TrimmingProceser", "Encoder Delay : " + trimStartFrames + " / End Padding : " + trimEndFrames);
   }
 
   /** Sets the trimmed frame count returned by {@link #getTrimmedFrameCount()} to zero. */
@@ -68,7 +73,7 @@ import java.nio.ByteBuffer;
   @Override
   public AudioFormat onConfigure(AudioFormat inputAudioFormat)
       throws UnhandledAudioFormatException {
-    if (inputAudioFormat.encoding != OUTPUT_ENCODING) {
+    if ((inputAudioFormat.encoding != OUTPUT_ENCODING) && (inputAudioFormat.encoding != OUTPUT_ENCODING_FLOAT)) {
       throw new UnhandledAudioFormatException(inputAudioFormat);
     }
     reconfigurationPending = true;
@@ -86,7 +91,7 @@ import java.nio.ByteBuffer;
     }
 
     // Trim any pending start bytes from the input buffer.
-    int trimBytes = Math.min(remaining, pendingTrimStartBytes);
+    int trimBytes = min(remaining, pendingTrimStartBytes);
     trimmedFrameCount += trimBytes / inputAudioFormat.bytesPerFrame;
     pendingTrimStartBytes -= trimBytes;
     inputBuffer.position(position + trimBytes);
