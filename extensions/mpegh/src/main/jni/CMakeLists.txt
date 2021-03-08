@@ -11,7 +11,7 @@ include_directories(
 find_library(log-lib
         log)
 
-add_library(mpeghaudio
+add_library(mpegh
         SHARED
         mpegh_jni.cc mpegh_decoder.cc
         virtualizer_jni.cc
@@ -33,5 +33,5 @@ set_target_properties(AlcApi
         ${CMAKE_CURRENT_SOURCE_DIR}/mpegh/android-libs/${ANDROID_ABI}/libAlcApi.a)
 
 target_link_libraries(
-        mpeghaudio SonyIA_mobile SonyVirtualizer AlcApi ${log-lib}
+        mpegh SonyIA_mobile SonyVirtualizer AlcApi ${log-lib}
 )

@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer2.ext.mpegh;
 
+import android.media.AudioFormat;
+
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
 import com.google.android.exoplayer2.audio.AudioProcessor;
@@ -82,7 +84,7 @@ public final class AlcAudioProcessor implements AudioProcessor {
   private LocalOutputBufferQueue localOutputBufferQueue;
 
   static {
-    LOADER = new LibraryLoader("mpeghaudio");
+    LOADER = new LibraryLoader("mpegh");
   }
 
   public static void setLibraries(String... libraries) {

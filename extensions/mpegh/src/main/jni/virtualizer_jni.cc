@@ -43,11 +43,11 @@ extern "C" {
 #define LIBRARY_FUNC(RETURN_TYPE, NAME, ...) \
   extern "C" { \
   JNIEXPORT RETURN_TYPE \
-    Java_com_google_android_exoplayer2_ext_mpeghaudio_VirtualizerAudioProcessor_ ## NAME \
+    Java_com_google_android_exoplayer2_ext_mpegh_VirtualizerAudioProcessor_ ## NAME \
       (JNIEnv* env, jobject thiz, ##__VA_ARGS__);\
   } \
   JNIEXPORT RETURN_TYPE \
-    Java_com_google_android_exoplayer2_ext_mpeghaudio_VirtualizerAudioProcessor_ ## NAME \
+    Java_com_google_android_exoplayer2_ext_mpegh_VirtualizerAudioProcessor_ ## NAME \
       (JNIEnv* env, jobject thiz, ##__VA_ARGS__)\
 
 

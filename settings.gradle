@@ -32,3 +32,4 @@ project(modulePrefix + 'demo-mpegh').projectDir = new File(rootDir, 'demos/main_
 project(modulePrefix + 'playbacktests').projectDir = new File(rootDir, 'playbacktests')
 
 apply from: 'core_settings.gradle'
+

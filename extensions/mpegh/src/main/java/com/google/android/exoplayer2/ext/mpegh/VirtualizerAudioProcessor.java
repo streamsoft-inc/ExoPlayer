@@ -169,7 +169,7 @@ public final class VirtualizerAudioProcessor implements AudioProcessor {
   private ByteBuffer tempFloatBuffer;
 
   static {
-    LOADER = new LibraryLoader("mpeghaudio");
+    LOADER = new LibraryLoader("mpegh");
   }
 
   public static void setLibraries(String... libraries) {
