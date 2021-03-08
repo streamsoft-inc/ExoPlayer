@@ -68,10 +68,8 @@ import java.io.IOException;
    * @param input The extractor input from which to peek data. The peek position will be modified.
    * @return Whether the input appears to be in the fragmented MP4 format.
    * @throws IOException If an error occurs reading from the input.
-   * @throws InterruptedException If the thread has been interrupted.
    */
-  public static boolean sniffFragmented(ExtractorInput input)
-      throws IOException, InterruptedException {
+  public static boolean sniffFragmented(ExtractorInput input) throws IOException {
     return sniffInternal(input, true);
   }
 
@@ -82,15 +80,13 @@ import java.io.IOException;
    * @param input The extractor input from which to peek data. The peek position will be modified.
    * @return Whether the input appears to be in the unfragmented MP4 format.
    * @throws IOException If an error occurs reading from the input.
-   * @throws InterruptedException If the thread has been interrupted.
    */
-  public static boolean sniffUnfragmented(ExtractorInput input)
-      throws IOException, InterruptedException {
+  public static boolean sniffUnfragmented(ExtractorInput input) throws IOException {
     return sniffInternal(input, false);
   }
 
   private static boolean sniffInternal(ExtractorInput input, boolean fragmented)
-      throws IOException, InterruptedException {
+      throws IOException {
     long inputLength = input.getLength();
     int bytesToSearch = (int) (inputLength == C.LENGTH_UNSET || inputLength > SEARCH_LENGTH
         ? SEARCH_LENGTH : inputLength);
@@ -104,7 +100,7 @@ import java.io.IOException;
       int headerSize = Atom.HEADER_SIZE;
       buffer.reset(headerSize);
       boolean success =
-          input.peekFully(buffer.data, 0, headerSize, /* allowEndOfInput= */ true);
+          input.peekFully(buffer.getData(), 0, headerSize, /* allowEndOfInput= */ true);
       if (!success) {
         // We've reached the end of the file.
         break;
@@ -114,7 +110,8 @@ import java.io.IOException;
       if (atomSize == Atom.DEFINES_LARGE_SIZE) {
         // Read the large atom size.
         headerSize = Atom.LONG_HEADER_SIZE;
-        input.peekFully(buffer.data, Atom.HEADER_SIZE, Atom.LONG_HEADER_SIZE - Atom.HEADER_SIZE);
+        input.peekFully(
+            buffer.getData(), Atom.HEADER_SIZE, Atom.LONG_HEADER_SIZE - Atom.HEADER_SIZE);
         buffer.setLimit(Atom.LONG_HEADER_SIZE);
         atomSize = buffer.readLong();
       } else if (atomSize == Atom.EXTENDS_TO_END_SIZE) {
@@ -162,7 +159,7 @@ import java.io.IOException;
           return false;
         }
         buffer.reset(atomDataSize);
-        input.peekFully(buffer.data, 0, atomDataSize);
+        input.peekFully(buffer.getData(), 0, atomDataSize);
         int brandsCount = atomDataSize / 4;
         for (int i = 0; i < brandsCount; i++) {
           if (i == 1) {

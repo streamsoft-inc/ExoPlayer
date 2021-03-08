@@ -17,8 +17,6 @@ package com.google.android.exoplayer2.ext.mpegh;
 
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.util.ParsableByteArray;
-import com.google.android.exoplayer2.util.Util;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -384,9 +382,14 @@ import java.util.List;
   @SuppressWarnings("ConstantCaseForConstants")
   public static final int TYPE_twos = 0x74776f73;
 
-  public static final int TYPE_mhac = Util.getIntegerCodeForString("mhaC");
-  public static final int TYPE_mhm1 = Util.getIntegerCodeForString("mhm1");
-  public static final int TYPE_mha1 = Util.getIntegerCodeForString("mha1");
+  @SuppressWarnings("ConstantCaseForConstants")
+  public static final int TYPE_mha1 = 0x6d686131;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  public static final int TYPE_mhm1 = 0x6d686d31;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  public static final int TYPE_mhaC = 0x6d686143;
 
   public final int type;
 

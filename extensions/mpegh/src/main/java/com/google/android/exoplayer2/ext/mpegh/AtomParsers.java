@@ -15,15 +15,19 @@
  */
 package com.google.android.exoplayer2.ext.mpegh;
 
+import static com.google.android.exoplayer2.util.Assertions.checkNotNull;
 import static com.google.android.exoplayer2.util.MimeTypes.getMimeTypeFromMp4ObjectType;
+import static java.lang.Math.max;
 
 import android.util.Pair;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ParserException;
+import com.google.android.exoplayer2.audio.AacUtil;
 import com.google.android.exoplayer2.audio.Ac3Util;
 import com.google.android.exoplayer2.audio.Ac4Util;
+import com.google.android.exoplayer2.audio.OpusUtil;
 import com.google.android.exoplayer2.drm.DrmInitData;
 import com.google.android.exoplayer2.extractor.GaplessInfoHolder;
 import com.google.android.exoplayer2.metadata.Metadata;
@@ -36,12 +40,14 @@ import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.AvcConfig;
 import com.google.android.exoplayer2.video.DolbyVisionConfig;
 import com.google.android.exoplayer2.video.HevcConfig;
+import com.google.common.base.Function;
+import com.google.common.collect.ImmutableList;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
+import org.checkerframework.checker.nullness.compatqual.NullableType;
 
-/** Utility methods for parsing MP4 format atom payloads according to ISO 14496-12. */
+/** Utility methods for parsing MP4 format atom payloads according to ISO/IEC 14496-12. */
 @SuppressWarnings({"ConstantField"})
 /* package */ final class AtomParsers {
 
@@ -81,27 +87,173 @@ import java.util.List;
   private static final byte[] opusMagic = Util.getUtf8Bytes("OpusHead");
 
   /**
-   * Parses a trak atom (defined in 14496-12).
+   * Parse the trak atoms in a moov atom (defined in ISO/IEC 14496-12).
+   *
+   * @param moov Moov atom to decode.
+   * @param gaplessInfoHolder Holder to populate with gapless playback information.
+   * @param duration The duration in units of the timescale declared in the mvhd atom, or {@link
+   *     C#TIME_UNSET} if the duration should be parsed from the tkhd atom.
+   * @param drmInitData {@link DrmInitData} to be included in the format, or {@code null}.
+   * @param ignoreEditLists Whether to ignore any edit lists in the trak boxes.
+   * @param isQuickTime True for QuickTime media. False otherwise.
+   * @param modifyTrackFunction A function to apply to the {@link Track Tracks} in the result.
+   * @return A list of {@link TrackSampleTable} instances.
+   * @throws ParserException Thrown if the trak atoms can't be parsed.
+   */
+  public static List<TrackSampleTable> parseTraks(
+      Atom.ContainerAtom moov,
+      GaplessInfoHolder gaplessInfoHolder,
+      long duration,
+      @Nullable DrmInitData drmInitData,
+      boolean ignoreEditLists,
+      boolean isQuickTime,
+      Function<@NullableType Track, @NullableType Track> modifyTrackFunction)
+      throws ParserException {
+    List<TrackSampleTable> trackSampleTables = new ArrayList<>();
+    for (int i = 0; i < moov.containerChildren.size(); i++) {
+      Atom.ContainerAtom atom = moov.containerChildren.get(i);
+      if (atom.type != Atom.TYPE_trak) {
+        continue;
+      }
+      @Nullable
+      Track track =
+          modifyTrackFunction.apply(
+              parseTrak(
+                  atom,
+                  checkNotNull(moov.getLeafAtomOfType(Atom.TYPE_mvhd)),
+                  duration,
+                  drmInitData,
+                  ignoreEditLists,
+                  isQuickTime));
+      if (track == null) {
+        continue;
+      }
+      Atom.ContainerAtom stblAtom =
+          checkNotNull(
+              checkNotNull(
+                      checkNotNull(atom.getContainerAtomOfType(Atom.TYPE_mdia))
+                          .getContainerAtomOfType(Atom.TYPE_minf))
+                  .getContainerAtomOfType(Atom.TYPE_stbl));
+      TrackSampleTable trackSampleTable = parseStbl(track, stblAtom, gaplessInfoHolder);
+      trackSampleTables.add(trackSampleTable);
+    }
+    return trackSampleTables;
+  }
+
+  /**
+   * Parses a udta atom.
+   *
+   * @param udtaAtom The udta (user data) atom to decode.
+   * @param isQuickTime True for QuickTime media. False otherwise.
+   * @return Parsed metadata, or null.
+   */
+  @Nullable
+  public static Metadata parseUdta(Atom.LeafAtom udtaAtom, boolean isQuickTime) {
+    if (isQuickTime) {
+      // Meta boxes are regular boxes rather than full boxes in QuickTime. For now, don't try and
+      // decode one.
+      return null;
+    }
+    ParsableByteArray udtaData = udtaAtom.data;
+    udtaData.setPosition(Atom.HEADER_SIZE);
+    while (udtaData.bytesLeft() >= Atom.HEADER_SIZE) {
+      int atomPosition = udtaData.getPosition();
+      int atomSize = udtaData.readInt();
+      int atomType = udtaData.readInt();
+      if (atomType == Atom.TYPE_meta) {
+        udtaData.setPosition(atomPosition);
+        return parseUdtaMeta(udtaData, atomPosition + atomSize);
+      }
+      udtaData.setPosition(atomPosition + atomSize);
+    }
+    return null;
+  }
+
+  /**
+   * Parses a metadata meta atom if it contains metadata with handler 'mdta'.
+   *
+   * @param meta The metadata atom to decode.
+   * @return Parsed metadata, or null.
+   */
+  @Nullable
+  public static Metadata parseMdtaFromMeta(Atom.ContainerAtom meta) {
+    @Nullable Atom.LeafAtom hdlrAtom = meta.getLeafAtomOfType(Atom.TYPE_hdlr);
+    @Nullable Atom.LeafAtom keysAtom = meta.getLeafAtomOfType(Atom.TYPE_keys);
+    @Nullable Atom.LeafAtom ilstAtom = meta.getLeafAtomOfType(Atom.TYPE_ilst);
+    if (hdlrAtom == null
+        || keysAtom == null
+        || ilstAtom == null
+        || parseHdlr(hdlrAtom.data) != TYPE_mdta) {
+      // There isn't enough information to parse the metadata, or the handler type is unexpected.
+      return null;
+    }
+
+    // Parse metadata keys.
+    ParsableByteArray keys = keysAtom.data;
+    keys.setPosition(Atom.FULL_HEADER_SIZE);
+    int entryCount = keys.readInt();
+    String[] keyNames = new String[entryCount];
+    for (int i = 0; i < entryCount; i++) {
+      int entrySize = keys.readInt();
+      keys.skipBytes(4); // keyNamespace
+      int keySize = entrySize - 8;
+      keyNames[i] = keys.readString(keySize);
+    }
+
+    // Parse metadata items.
+    ParsableByteArray ilst = ilstAtom.data;
+    ilst.setPosition(Atom.HEADER_SIZE);
+    ArrayList<Metadata.Entry> entries = new ArrayList<>();
+    while (ilst.bytesLeft() > Atom.HEADER_SIZE) {
+      int atomPosition = ilst.getPosition();
+      int atomSize = ilst.readInt();
+      int keyIndex = ilst.readInt() - 1;
+      if (keyIndex >= 0 && keyIndex < keyNames.length) {
+        String key = keyNames[keyIndex];
+        @Nullable
+        Metadata.Entry entry =
+            MetadataUtil.parseMdtaMetadataEntryFromIlst(ilst, atomPosition + atomSize, key);
+        if (entry != null) {
+          entries.add(entry);
+        }
+      } else {
+        Log.w(TAG, "Skipped metadata with unknown key index: " + keyIndex);
+      }
+      ilst.setPosition(atomPosition + atomSize);
+    }
+    return entries.isEmpty() ? null : new Metadata(entries);
+  }
+
+  /**
+   * Parses a trak atom (defined in ISO/IEC 14496-12).
    *
    * @param trak Atom to decode.
    * @param mvhd Movie header atom, used to get the timescale.
-   * @param duration The duration in units of the timescale declared in the mvhd atom, or
-   *     {@link C#TIME_UNSET} if the duration should be parsed from the tkhd atom.
-   * @param drmInitData {@link DrmInitData} to be included in the format.
+   * @param duration The duration in units of the timescale declared in the mvhd atom, or {@link
+   *     C#TIME_UNSET} if the duration should be parsed from the tkhd atom.
+   * @param drmInitData {@link DrmInitData} to be included in the format, or {@code null}.
    * @param ignoreEditLists Whether to ignore any edit lists in the trak box.
    * @param isQuickTime True for QuickTime media. False otherwise.
    * @return A {@link Track} instance, or {@code null} if the track's type isn't supported.
+   * @throws ParserException Thrown if the trak atom can't be parsed.
    */
-  public static Track parseTrak(Atom.ContainerAtom trak, Atom.LeafAtom mvhd, long duration,
-      DrmInitData drmInitData, boolean ignoreEditLists, boolean isQuickTime)
+  @Nullable
+  private static Track parseTrak(
+      Atom.ContainerAtom trak,
+      Atom.LeafAtom mvhd,
+      long duration,
+      @Nullable DrmInitData drmInitData,
+      boolean ignoreEditLists,
+      boolean isQuickTime)
       throws ParserException {
-    Atom.ContainerAtom mdia = trak.getContainerAtomOfType(Atom.TYPE_mdia);
-    int trackType = getTrackTypeForHdlr(parseHdlr(mdia.getLeafAtomOfType(Atom.TYPE_hdlr).data));
+    Atom.ContainerAtom mdia = checkNotNull(trak.getContainerAtomOfType(Atom.TYPE_mdia));
+    int trackType =
+        getTrackTypeForHdlr(parseHdlr(checkNotNull(mdia.getLeafAtomOfType(Atom.TYPE_hdlr)).data));
     if (trackType == C.TRACK_TYPE_UNKNOWN) {
       return null;
     }
 
-    TkhdData tkhdData = parseTkhd(trak.getLeafAtomOfType(Atom.TYPE_tkhd).data);
+    TkhdData tkhdData = parseTkhd(checkNotNull(trak.getLeafAtomOfType(Atom.TYPE_tkhd)).data);
     if (duration == C.TIME_UNSET) {
       duration = tkhdData.duration;
     }
@@ -112,18 +264,32 @@ import java.util.List;
     } else {
       durationUs = Util.scaleLargeTimestamp(duration, C.MICROS_PER_SECOND, movieTimescale);
     }
-    Atom.ContainerAtom stbl = mdia.getContainerAtomOfType(Atom.TYPE_minf)
-        .getContainerAtomOfType(Atom.TYPE_stbl);
+    Atom.ContainerAtom stbl =
+        checkNotNull(
+            checkNotNull(mdia.getContainerAtomOfType(Atom.TYPE_minf))
+                .getContainerAtomOfType(Atom.TYPE_stbl));
 
-    Pair<Long, String> mdhdData = parseMdhd(mdia.getLeafAtomOfType(Atom.TYPE_mdhd).data);
-    StsdData stsdData = parseStsd(stbl.getLeafAtomOfType(Atom.TYPE_stsd).data, tkhdData.id,
-        tkhdData.rotationDegrees, mdhdData.second, drmInitData, isQuickTime);
-    long[] editListDurations = null;
-    long[] editListMediaTimes = null;
+    Pair<Long, String> mdhdData =
+        parseMdhd(checkNotNull(mdia.getLeafAtomOfType(Atom.TYPE_mdhd)).data);
+    StsdData stsdData =
+        parseStsd(
+            checkNotNull(stbl.getLeafAtomOfType(Atom.TYPE_stsd)).data,
+            tkhdData.id,
+            tkhdData.rotationDegrees,
+            mdhdData.second,
+            drmInitData,
+            isQuickTime);
+    @Nullable long[] editListDurations = null;
+    @Nullable long[] editListMediaTimes = null;
     if (!ignoreEditLists) {
-      Pair<long[], long[]> edtsData = parseEdts(trak.getContainerAtomOfType(Atom.TYPE_edts));
-      editListDurations = edtsData.first;
-      editListMediaTimes = edtsData.second;
+      @Nullable Atom.ContainerAtom edtsAtom = trak.getContainerAtomOfType(Atom.TYPE_edts);
+      if (edtsAtom != null) {
+        @Nullable Pair<long[], long[]> edtsData = parseEdts(edtsAtom);
+        if (edtsData != null) {
+          editListDurations = edtsData.first;
+          editListMediaTimes = edtsData.second;
+        }
+      }
     }
     return stsdData.format == null ? null
         : new Track(tkhdData.id, trackType, mdhdData.first, movieTimescale, durationUs,
@@ -132,7 +298,7 @@ import java.util.List;
   }
 
   /**
-   * Parses an stbl atom (defined in 14496-12).
+   * Parses an stbl atom (defined in ISO/IEC 14496-12).
    *
    * @param track Track to which this sample table corresponds.
    * @param stblAtom stbl (sample table) atom to decode.
@@ -140,15 +306,15 @@ import java.util.List;
    * @return Sample table described by the stbl atom.
    * @throws ParserException Thrown if the stbl atom can't be parsed.
    */
-  public static TrackSampleTable parseStbl(
+  private static TrackSampleTable parseStbl(
       Track track, Atom.ContainerAtom stblAtom, GaplessInfoHolder gaplessInfoHolder)
       throws ParserException {
     SampleSizeBox sampleSizeBox;
-    Atom.LeafAtom stszAtom = stblAtom.getLeafAtomOfType(Atom.TYPE_stsz);
+    @Nullable Atom.LeafAtom stszAtom = stblAtom.getLeafAtomOfType(Atom.TYPE_stsz);
     if (stszAtom != null) {
       sampleSizeBox = new StszSampleSizeBox(stszAtom);
     } else {
-      Atom.LeafAtom stz2Atom = stblAtom.getLeafAtomOfType(Atom.TYPE_stz2);
+      @Nullable Atom.LeafAtom stz2Atom = stblAtom.getLeafAtomOfType(Atom.TYPE_stz2);
       if (stz2Atom == null) {
         throw new ParserException("Track has no sample table size information");
       }
@@ -164,27 +330,27 @@ import java.util.List;
           /* maximumSize= */ 0,
           /* timestampsUs= */ new long[0],
           /* flags= */ new int[0],
-          /* durationUs= */ C.TIME_UNSET);
+          /* durationUs= */ 0);
     }
 
     // Entries are byte offsets of chunks.
     boolean chunkOffsetsAreLongs = false;
-    Atom.LeafAtom chunkOffsetsAtom = stblAtom.getLeafAtomOfType(Atom.TYPE_stco);
+    @Nullable Atom.LeafAtom chunkOffsetsAtom = stblAtom.getLeafAtomOfType(Atom.TYPE_stco);
     if (chunkOffsetsAtom == null) {
       chunkOffsetsAreLongs = true;
-      chunkOffsetsAtom = stblAtom.getLeafAtomOfType(Atom.TYPE_co64);
+      chunkOffsetsAtom = checkNotNull(stblAtom.getLeafAtomOfType(Atom.TYPE_co64));
     }
     ParsableByteArray chunkOffsets = chunkOffsetsAtom.data;
     // Entries are (chunk number, number of samples per chunk, sample description index).
-    ParsableByteArray stsc = stblAtom.getLeafAtomOfType(Atom.TYPE_stsc).data;
+    ParsableByteArray stsc = checkNotNull(stblAtom.getLeafAtomOfType(Atom.TYPE_stsc)).data;
     // Entries are (number of samples, timestamp delta between those samples).
-    ParsableByteArray stts = stblAtom.getLeafAtomOfType(Atom.TYPE_stts).data;
+    ParsableByteArray stts = checkNotNull(stblAtom.getLeafAtomOfType(Atom.TYPE_stts)).data;
     // Entries are the indices of samples that are synchronization samples.
-    Atom.LeafAtom stssAtom = stblAtom.getLeafAtomOfType(Atom.TYPE_stss);
-    ParsableByteArray stss = stssAtom != null ? stssAtom.data : null;
+    @Nullable Atom.LeafAtom stssAtom = stblAtom.getLeafAtomOfType(Atom.TYPE_stss);
+    @Nullable ParsableByteArray stss = stssAtom != null ? stssAtom.data : null;
     // Entries are (number of samples, timestamp offset).
-    Atom.LeafAtom cttsAtom = stblAtom.getLeafAtomOfType(Atom.TYPE_ctts);
-    ParsableByteArray ctts = cttsAtom != null ? cttsAtom.data : null;
+    @Nullable Atom.LeafAtom cttsAtom = stblAtom.getLeafAtomOfType(Atom.TYPE_ctts);
+    @Nullable ParsableByteArray ctts = cttsAtom != null ? cttsAtom.data : null;
 
     // Prepare to read chunk information.
     ChunkIterator chunkIterator = new ChunkIterator(stsc, chunkOffsets, chunkOffsetsAreLongs);
@@ -233,7 +399,25 @@ import java.util.List;
     long timestampTimeUnits = 0;
     long duration;
 
-    if (!isFixedSampleSizeRawAudio) {
+    if (isFixedSampleSizeRawAudio) {
+      long[] chunkOffsetsBytes = new long[chunkIterator.length];
+      int[] chunkSampleCounts = new int[chunkIterator.length];
+      while (chunkIterator.moveNext()) {
+        chunkOffsetsBytes[chunkIterator.index] = chunkIterator.offset;
+        chunkSampleCounts[chunkIterator.index] = chunkIterator.numSamples;
+      }
+      int fixedSampleSize =
+          Util.getPcmFrameSize(track.format.pcmEncoding, track.format.channelCount);
+      FixedSampleSizeRechunker.Results rechunkedResults =
+          FixedSampleSizeRechunker.rechunk(
+              fixedSampleSize, chunkOffsetsBytes, chunkSampleCounts, timestampDeltaInTimeUnits);
+      offsets = rechunkedResults.offsets;
+      sizes = rechunkedResults.sizes;
+      maximumSize = rechunkedResults.maximumSize;
+      timestamps = rechunkedResults.timestamps;
+      flags = rechunkedResults.flags;
+      duration = rechunkedResults.duration;
+    } else {
       offsets = new long[sampleCount];
       sizes = new int[sampleCount];
       timestamps = new long[sampleCount];
@@ -262,11 +446,11 @@ import java.util.List;
         if (ctts != null) {
           while (remainingSamplesAtTimestampOffset == 0 && remainingTimestampOffsetChanges > 0) {
             remainingSamplesAtTimestampOffset = ctts.readUnsignedIntToInt();
-            // The BMFF spec (ISO 14496-12) states that sample offsets should be unsigned integers
-            // in version 0 ctts boxes, however some streams violate the spec and use signed
-            // integers instead. It's safe to always decode sample offsets as signed integers here,
-            // because unsigned integers will still be parsed correctly (unless their top bit is
-            // set, which is never true in practice because sample offsets are always small).
+            // The BMFF spec (ISO/IEC 14496-12) states that sample offsets should be unsigned
+            // integers in version 0 ctts boxes, however some streams violate the spec and use
+            // signed integers instead. It's safe to always decode sample offsets as signed integers
+            // here, because unsigned integers will still be parsed correctly (unless their top bit
+            // is set, which is never true in practice because sample offsets are always small).
             timestampOffset = ctts.readInt();
             remainingTimestampOffsetChanges--;
           }
@@ -286,7 +470,7 @@ import java.util.List;
           flags[i] = C.BUFFER_FLAG_KEY_FRAME;
           remainingSynchronizationSamples--;
           if (remainingSynchronizationSamples > 0) {
-            nextSynchronizationSampleIndex = stss.readUnsignedIntToInt() - 1;
+            nextSynchronizationSampleIndex = checkNotNull(stss).readUnsignedIntToInt() - 1;
           }
         }
 
@@ -295,7 +479,7 @@ import java.util.List;
         remainingSamplesAtTimestampDelta--;
         if (remainingSamplesAtTimestampDelta == 0 && remainingTimestampDeltaChanges > 0) {
           remainingSamplesAtTimestampDelta = stts.readUnsignedIntToInt();
-          // The BMFF spec (ISO 14496-12) states that sample deltas should be unsigned integers
+          // The BMFF spec (ISO/IEC 14496-12) states that sample deltas should be unsigned integers
           // in stts boxes, however some streams violate the spec and use signed integers instead.
           // See https://github.com/google/ExoPlayer/issues/3384. It's safe to always decode sample
           // deltas as signed integers here, because unsigned integers will still be parsed
@@ -313,13 +497,15 @@ import java.util.List;
       // If the stbl's child boxes are not consistent the container is malformed, but the stream may
       // still be playable.
       boolean isCttsValid = true;
-      while (remainingTimestampOffsetChanges > 0) {
-        if (ctts.readUnsignedIntToInt() != 0) {
-          isCttsValid = false;
-          break;
+      if (ctts != null) {
+        while (remainingTimestampOffsetChanges > 0) {
+          if (ctts.readUnsignedIntToInt() != 0) {
+            isCttsValid = false;
+            break;
+          }
+          ctts.readInt(); // Ignore offset.
+          remainingTimestampOffsetChanges--;
         }
-        ctts.readInt(); // Ignore offset.
-        remainingTimestampOffsetChanges--;
       }
       if (remainingSynchronizationSamples != 0
           || remainingSamplesAtTimestampDelta != 0
@@ -343,23 +529,6 @@ import java.util.List;
                 + remainingSamplesAtTimestampOffset
                 + (!isCttsValid ? ", ctts invalid" : ""));
       }
-    } else {
-      long[] chunkOffsetsBytes = new long[chunkIterator.length];
-      int[] chunkSampleCounts = new int[chunkIterator.length];
-      while (chunkIterator.moveNext()) {
-        chunkOffsetsBytes[chunkIterator.index] = chunkIterator.offset;
-        chunkSampleCounts[chunkIterator.index] = chunkIterator.numSamples;
-      }
-      int fixedSampleSize =
-          Util.getPcmFrameSize(track.format.pcmEncoding, track.format.channelCount);
-      FixedSampleSizeRechunker.Results rechunkedResults = FixedSampleSizeRechunker.rechunk(
-          fixedSampleSize, chunkOffsetsBytes, chunkSampleCounts, timestampDeltaInTimeUnits);
-      offsets = rechunkedResults.offsets;
-      sizes = rechunkedResults.sizes;
-      maximumSize = rechunkedResults.maximumSize;
-      timestamps = rechunkedResults.timestamps;
-      flags = rechunkedResults.flags;
-      duration = rechunkedResults.duration;
     }
     long durationUs = Util.scaleLargeTimestamp(duration, C.MICROS_PER_SECOND, track.timescale);
 
@@ -369,17 +538,17 @@ import java.util.List;
           track, offsets, sizes, maximumSize, timestamps, flags, durationUs);
     }
 
-    // See the BMFF spec (ISO 14496-12) subsection 8.6.6. Edit lists that require prerolling from a
-    // sync sample after reordering are not supported. Partial audio sample truncation is only
-    // supported in edit lists with one edit that removes less than MAX_GAPLESS_TRIM_SIZE_SAMPLES
-    // samples from the start/end of the track. This implementation handles simple
-    // discarding/delaying of samples. The extractor may place further restrictions on what edited
-    // streams are playable.
+    // See the BMFF spec (ISO/IEC 14496-12) subsection 8.6.6. Edit lists that require prerolling
+    // from a sync sample after reordering are not supported. Partial audio sample truncation is
+    // only supported in edit lists with one edit that removes less than
+    // MAX_GAPLESS_TRIM_SIZE_SAMPLES samples from the start/end of the track. This implementation
+    // handles simple discarding/delaying of samples. The extractor may place further restrictions
+    // on what edited streams are playable.
 
     if (track.editListDurations.length == 1
         && track.type == C.TRACK_TYPE_AUDIO
         && timestamps.length >= 2) {
-      long editStartTime = track.editListMediaTimes[0];
+      long editStartTime = checkNotNull(track.editListMediaTimes)[0];
       long editEndTime = editStartTime + Util.scaleLargeTimestamp(track.editListDurations[0],
           track.timescale, track.movieTimescale);
       if (canApplyEditWithGaplessInfo(timestamps, duration, editStartTime, editEndTime)) {
@@ -406,7 +575,7 @@ import java.util.List;
       // The current version of the spec leaves handling of an edit with zero segment_duration in
       // unfragmented files open to interpretation. We handle this as a special case and include all
       // samples in the edit.
-      long editStartTime = track.editListMediaTimes[0];
+      long editStartTime = checkNotNull(track.editListMediaTimes)[0];
       for (int i = 0; i < timestamps.length; i++) {
         timestamps[i] =
             Util.scaleLargeTimestamp(
@@ -427,8 +596,9 @@ import java.util.List;
     boolean copyMetadata = false;
     int[] startIndices = new int[track.editListDurations.length];
     int[] endIndices = new int[track.editListDurations.length];
+    long[] editListMediaTimes = checkNotNull(track.editListMediaTimes);
     for (int i = 0; i < track.editListDurations.length; i++) {
-      long editMediaTime = track.editListMediaTimes[i];
+      long editMediaTime = editListMediaTimes[i];
       if (editMediaTime != -1) {
         long editDuration =
             Util.scaleLargeTimestamp(
@@ -479,7 +649,7 @@ import java.util.List;
         long ptsUs = Util.scaleLargeTimestamp(pts, C.MICROS_PER_SECOND, track.movieTimescale);
         long timeInSegmentUs =
             Util.scaleLargeTimestamp(
-                Math.max(0, timestamps[j] - editMediaTime), C.MICROS_PER_SECOND, track.timescale);
+                max(0, timestamps[j] - editMediaTime), C.MICROS_PER_SECOND, track.timescale);
         editedTimestamps[sampleIndex] = ptsUs + timeInSegmentUs;
         if (copyMetadata && editedSizes[sampleIndex] > editedMaximumSize) {
           editedMaximumSize = sizes[j];
@@ -498,89 +668,6 @@ import java.util.List;
         editedTimestamps,
         editedFlags,
         editedDurationUs);
-  }
-
-  /**
-   * Parses a udta atom.
-   *
-   * @param udtaAtom The udta (user data) atom to decode.
-   * @param isQuickTime True for QuickTime media. False otherwise.
-   * @return Parsed metadata, or null.
-   */
-  @Nullable
-  public static Metadata parseUdta(Atom.LeafAtom udtaAtom, boolean isQuickTime) {
-    if (isQuickTime) {
-      // Meta boxes are regular boxes rather than full boxes in QuickTime. For now, don't try and
-      // decode one.
-      return null;
-    }
-    ParsableByteArray udtaData = udtaAtom.data;
-    udtaData.setPosition(Atom.HEADER_SIZE);
-    while (udtaData.bytesLeft() >= Atom.HEADER_SIZE) {
-      int atomPosition = udtaData.getPosition();
-      int atomSize = udtaData.readInt();
-      int atomType = udtaData.readInt();
-      if (atomType == Atom.TYPE_meta) {
-        udtaData.setPosition(atomPosition);
-        return parseUdtaMeta(udtaData, atomPosition + atomSize);
-      }
-      udtaData.setPosition(atomPosition + atomSize);
-    }
-    return null;
-  }
-
-  /**
-   * Parses a metadata meta atom if it contains metadata with handler 'mdta'.
-   *
-   * @param meta The metadata atom to decode.
-   * @return Parsed metadata, or null.
-   */
-  @Nullable
-  public static Metadata parseMdtaFromMeta(Atom.ContainerAtom meta) {
-    Atom.LeafAtom hdlrAtom = meta.getLeafAtomOfType(Atom.TYPE_hdlr);
-    Atom.LeafAtom keysAtom = meta.getLeafAtomOfType(Atom.TYPE_keys);
-    Atom.LeafAtom ilstAtom = meta.getLeafAtomOfType(Atom.TYPE_ilst);
-    if (hdlrAtom == null
-        || keysAtom == null
-        || ilstAtom == null
-        || AtomParsers.parseHdlr(hdlrAtom.data) != TYPE_mdta) {
-      // There isn't enough information to parse the metadata, or the handler type is unexpected.
-      return null;
-    }
-
-    // Parse metadata keys.
-    ParsableByteArray keys = keysAtom.data;
-    keys.setPosition(Atom.FULL_HEADER_SIZE);
-    int entryCount = keys.readInt();
-    String[] keyNames = new String[entryCount];
-    for (int i = 0; i < entryCount; i++) {
-      int entrySize = keys.readInt();
-      keys.skipBytes(4); // keyNamespace
-      int keySize = entrySize - 8;
-      keyNames[i] = keys.readString(keySize);
-    }
-
-    // Parse metadata items.
-    ParsableByteArray ilst = ilstAtom.data;
-    ilst.setPosition(Atom.HEADER_SIZE);
-    ArrayList<Metadata.Entry> entries = new ArrayList<>();
-    while (ilst.bytesLeft() > Atom.HEADER_SIZE) {
-      int atomPosition = ilst.getPosition();
-      int atomSize = ilst.readInt();
-      int keyIndex = ilst.readInt() - 1;
-      if (keyIndex >= 0 && keyIndex < keyNames.length) {
-        String key = keyNames[keyIndex];
-        Metadata.Entry entry =
-            MetadataUtil.parseMdtaMetadataEntryFromIlst(ilst, atomPosition + atomSize, key);
-        if (entry != null) {
-          entries.add(entry);
-        }
-      } else {
-        Log.w(TAG, "Skipped metadata with unknown key index: " + keyIndex);
-      }
-      ilst.setPosition(atomPosition + atomSize);
-    }
-    return entries.isEmpty() ? null : new Metadata(entries);
   }
 
   @Nullable
@@ -604,7 +691,7 @@ import java.util.List;
     ilst.skipBytes(Atom.HEADER_SIZE);
     ArrayList<Metadata.Entry> entries = new ArrayList<>();
     while (ilst.getPosition() < limit) {
-      Metadata.Entry entry = MetadataUtil.parseIlstElement(ilst);
+      @Nullable Metadata.Entry entry = MetadataUtil.parseIlstElement(ilst);
       if (entry != null) {
         entries.add(entry);
       }
@@ -613,7 +700,7 @@ import java.util.List;
   }
 
   /**
-   * Parses a mvhd atom (defined in 14496-12), returning the timescale for the movie.
+   * Parses a mvhd atom (defined in ISO/IEC 14496-12), returning the timescale for the movie.
    *
    * @param mvhd Contents of the mvhd atom to be parsed.
    * @return Timescale for the movie.
@@ -627,7 +714,7 @@ import java.util.List;
   }
 
   /**
-   * Parses a tkhd atom (defined in 14496-12).
+   * Parses a tkhd atom (defined in ISO/IEC 14496-12).
    *
    * @return An object containing the parsed data.
    */
@@ -644,7 +731,7 @@ import java.util.List;
     int durationPosition = tkhd.getPosition();
     int durationByteCount = version == 0 ? 4 : 8;
     for (int i = 0; i < durationByteCount; i++) {
-      if (tkhd.data[durationPosition + i] != -1) {
+      if (tkhd.getData()[durationPosition + i] != -1) {
         durationUnknown = false;
         break;
       }
@@ -712,11 +799,11 @@ import java.util.List;
   }
 
   /**
-   * Parses an mdhd atom (defined in 14496-12).
+   * Parses an mdhd atom (defined in ISO/IEC 14496-12).
    *
    * @param mdhd The mdhd atom to decode.
    * @return A pair consisting of the media timescale defined as the number of time units that pass
-   * in one second, and the language code.
+   *     in one second, and the language code.
    */
   private static Pair<Long, String> parseMdhd(ParsableByteArray mdhd) {
     mdhd.setPosition(Atom.HEADER_SIZE);
@@ -735,25 +822,31 @@ import java.util.List;
   }
 
   /**
-   * Parses a stsd atom (defined in 14496-12).
+   * Parses a stsd atom (defined in ISO/IEC 14496-12).
    *
    * @param stsd The stsd atom to decode.
    * @param trackId The track's identifier in its container.
    * @param rotationDegrees The rotation of the track in degrees.
    * @param language The language of the track.
-   * @param drmInitData {@link DrmInitData} to be included in the format.
+   * @param drmInitData {@link DrmInitData} to be included in the format, or {@code null}.
    * @param isQuickTime True for QuickTime media. False otherwise.
    * @return An object containing the parsed data.
    */
-  private static StsdData parseStsd(ParsableByteArray stsd, int trackId, int rotationDegrees,
-      String language, DrmInitData drmInitData, boolean isQuickTime) throws ParserException {
+  private static StsdData parseStsd(
+      ParsableByteArray stsd,
+      int trackId,
+      int rotationDegrees,
+      String language,
+      @Nullable DrmInitData drmInitData,
+      boolean isQuickTime)
+      throws ParserException {
     stsd.setPosition(Atom.FULL_HEADER_SIZE);
     int numberOfEntries = stsd.readInt();
     StsdData out = new StsdData(numberOfEntries);
     for (int i = 0; i < numberOfEntries; i++) {
       int childStartPosition = stsd.getPosition();
       int childAtomSize = stsd.readInt();
-      Assertions.checkArgument(childAtomSize > 0, "childAtomSize should be positive");
+      Assertions.checkState(childAtomSize > 0, "childAtomSize should be positive");
       int childAtomType = stsd.readInt();
       if (childAtomType == Atom.TYPE_avc1
           || childAtomType == Atom.TYPE_avc3
@@ -801,20 +894,29 @@ import java.util.List;
         parseTextSampleEntry(stsd, childAtomType, childStartPosition, childAtomSize, trackId,
             language, out);
       } else if (childAtomType == Atom.TYPE_camm) {
-        out.format = Format.createSampleFormat(Integer.toString(trackId),
-            MimeTypes.APPLICATION_CAMERA_MOTION, null, Format.NO_VALUE, null);
+        out.format =
+            new Format.Builder()
+                .setId(trackId)
+                .setSampleMimeType(MimeTypes.APPLICATION_CAMERA_MOTION)
+                .build();
       }
       stsd.setPosition(childStartPosition + childAtomSize);
     }
     return out;
   }
 
-  private static void parseTextSampleEntry(ParsableByteArray parent, int atomType, int position,
-      int atomSize, int trackId, String language, StsdData out) throws ParserException {
+  private static void parseTextSampleEntry(
+      ParsableByteArray parent,
+      int atomType,
+      int position,
+      int atomSize,
+      int trackId,
+      String language,
+      StsdData out) {
     parent.setPosition(position + Atom.HEADER_SIZE + StsdData.STSD_HEADER_SIZE);
 
     // Default values.
-    List<byte[]> initializationData = null;
+    @Nullable ImmutableList<byte[]> initializationData = null;
     long subsampleOffsetUs = Format.OFFSET_SAMPLE_RELATIVE;
 
     String mimeType;
@@ -825,7 +927,7 @@ import java.util.List;
       int sampleDescriptionLength = atomSize - Atom.HEADER_SIZE - 8;
       byte[] sampleDescriptionData = new byte[sampleDescriptionLength];
       parent.readBytes(sampleDescriptionData, 0, sampleDescriptionLength);
-      initializationData = Collections.singletonList(sampleDescriptionData);
+      initializationData = ImmutableList.of(sampleDescriptionData);
     } else if (atomType == Atom.TYPE_wvtt) {
       mimeType = MimeTypes.APPLICATION_MP4VTT;
     } else if (atomType == Atom.TYPE_stpp) {
@@ -841,22 +943,26 @@ import java.util.List;
     }
 
     out.format =
-        Format.createTextSampleFormat(
-            Integer.toString(trackId),
-            mimeType,
-            /* codecs= */ null,
-            /* bitrate= */ Format.NO_VALUE,
-            /* selectionFlags= */ 0,
-            language,
-            /* accessibilityChannel= */ Format.NO_VALUE,
-            /* drmInitData= */ null,
-            subsampleOffsetUs,
-            initializationData);
+        new Format.Builder()
+            .setId(trackId)
+            .setSampleMimeType(mimeType)
+            .setLanguage(language)
+            .setSubsampleOffsetUs(subsampleOffsetUs)
+            .setInitializationData(initializationData)
+            .build();
   }
 
-  private static void parseVideoSampleEntry(ParsableByteArray parent, int atomType, int position,
-      int size, int trackId, int rotationDegrees, DrmInitData drmInitData, StsdData out,
-      int entryIndex) throws ParserException {
+  private static void parseVideoSampleEntry(
+      ParsableByteArray parent,
+      int atomType,
+      int position,
+      int size,
+      int trackId,
+      int rotationDegrees,
+      @Nullable DrmInitData drmInitData,
+      StsdData out,
+      int entryIndex)
+      throws ParserException {
     parent.setPosition(position + Atom.HEADER_SIZE + StsdData.STSD_HEADER_SIZE);
 
     parent.skipBytes(16);
@@ -868,8 +974,9 @@ import java.util.List;
 
     int childPosition = parent.getPosition();
     if (atomType == Atom.TYPE_encv) {
-      Pair<Integer, TrackEncryptionBox> sampleEntryEncryptionData = parseSampleEntryEncryptionData(
-          parent, position, size);
+      @Nullable
+      Pair<Integer, TrackEncryptionBox> sampleEntryEncryptionData =
+          parseSampleEntryEncryptionData(parent, position, size);
       if (sampleEntryEncryptionData != null) {
         atomType = sampleEntryEncryptionData.first;
         drmInitData = drmInitData == null ? null
@@ -883,10 +990,10 @@ import java.util.List;
     //   drmInitData = null;
     // }
 
-    List<byte[]> initializationData = null;
-    String mimeType = null;
-    String codecs = null;
-    byte[] projectionData = null;
+    @Nullable List<byte[]> initializationData = null;
+    @Nullable String mimeType = null;
+    @Nullable String codecs = null;
+    @Nullable byte[] projectionData = null;
     @C.StereoMode
     int stereoMode = Format.NO_VALUE;
     while (childPosition - position < size) {
@@ -897,7 +1004,7 @@ import java.util.List;
         // Handle optional terminating four zero bytes in MOV files.
         break;
       }
-      Assertions.checkArgument(childAtomSize > 0, "childAtomSize should be positive");
+      Assertions.checkState(childAtomSize > 0, "childAtomSize should be positive");
       int childAtomType = parent.readInt();
       if (childAtomType == Atom.TYPE_avcC) {
         Assertions.checkState(mimeType == null);
@@ -917,7 +1024,7 @@ import java.util.List;
         initializationData = hevcConfig.initializationData;
         out.nalUnitLengthFieldLength = hevcConfig.nalUnitLengthFieldLength;
       } else if (childAtomType == Atom.TYPE_dvcC || childAtomType == Atom.TYPE_dvvC) {
-        DolbyVisionConfig dolbyVisionConfig = DolbyVisionConfig.parse(parent);
+        @Nullable DolbyVisionConfig dolbyVisionConfig = DolbyVisionConfig.parse(parent);
         if (dolbyVisionConfig != null) {
           codecs = dolbyVisionConfig.codecs;
           mimeType = MimeTypes.VIDEO_DOLBY_VISION;
@@ -933,10 +1040,13 @@ import java.util.List;
         mimeType = MimeTypes.VIDEO_H263;
       } else if (childAtomType == Atom.TYPE_esds) {
         Assertions.checkState(mimeType == null);
-        Pair<String, byte[]> mimeTypeAndInitializationData =
+        Pair<@NullableType String, byte @NullableType []> mimeTypeAndInitializationDataBytes =
             parseEsdsFromParent(parent, childStartPosition);
-        mimeType = mimeTypeAndInitializationData.first;
-        initializationData = Collections.singletonList(mimeTypeAndInitializationData.second);
+        mimeType = mimeTypeAndInitializationDataBytes.first;
+        @Nullable byte[] initializationDataBytes = mimeTypeAndInitializationDataBytes.second;
+        if (initializationDataBytes != null) {
+          initializationData = ImmutableList.of(initializationDataBytes);
+        }
       } else if (childAtomType == Atom.TYPE_pasp) {
         pixelWidthHeightRatio = parsePaspFromParent(parent, childStartPosition);
         pixelWidthHeightRatioFromPasp = true;
@@ -974,37 +1084,35 @@ import java.util.List;
     }
 
     out.format =
-        Format.createVideoSampleFormat(
-            Integer.toString(trackId),
-            mimeType,
-            codecs,
-            /* bitrate= */ Format.NO_VALUE,
-            /* maxInputSize= */ Format.NO_VALUE,
-            width,
-            height,
-            /* frameRate= */ Format.NO_VALUE,
-            initializationData,
-            rotationDegrees,
-            pixelWidthHeightRatio,
-            projectionData,
-            stereoMode,
-            /* colorInfo= */ null,
-            drmInitData);
+        new Format.Builder()
+            .setId(trackId)
+            .setSampleMimeType(mimeType)
+            .setCodecs(codecs)
+            .setWidth(width)
+            .setHeight(height)
+            .setPixelWidthHeightRatio(pixelWidthHeightRatio)
+            .setRotationDegrees(rotationDegrees)
+            .setProjectionData(projectionData)
+            .setStereoMode(stereoMode)
+            .setInitializationData(initializationData)
+            .setDrmInitData(drmInitData)
+            .build();
   }
 
   /**
-   * Parses the edts atom (defined in 14496-12 subsection 8.6.5).
+   * Parses the edts atom (defined in ISO/IEC 14496-12 subsection 8.6.5).
    *
    * @param edtsAtom edts (edit box) atom to decode.
-   * @return Pair of edit list durations and edit list media times, or a pair of nulls if they are
-   *     not present.
+   * @return Pair of edit list durations and edit list media times, or {@code null} if they are not
+   *     present.
    */
+  @Nullable
   private static Pair<long[], long[]> parseEdts(Atom.ContainerAtom edtsAtom) {
-    Atom.LeafAtom elst;
-    if (edtsAtom == null || (elst = edtsAtom.getLeafAtomOfType(Atom.TYPE_elst)) == null) {
-      return Pair.create(null, null);
+    @Nullable Atom.LeafAtom elstAtom = edtsAtom.getLeafAtomOfType(Atom.TYPE_elst);
+    if (elstAtom == null) {
+      return null;
     }
-    ParsableByteArray elstData = elst.data;
+    ParsableByteArray elstData = elstAtom.data;
     elstData.setPosition(Atom.HEADER_SIZE);
     int fullAtom = elstData.readInt();
     int version = Atom.parseFullAtomVersion(fullAtom);
@@ -1032,9 +1140,18 @@ import java.util.List;
     return (float) hSpacing / vSpacing;
   }
 
-  private static void parseAudioSampleEntry(ParsableByteArray parent, int atomType, int position,
-      int size, int trackId, String language, boolean isQuickTime, DrmInitData drmInitData,
-      StsdData out, int entryIndex) throws ParserException {
+  private static void parseAudioSampleEntry(
+      ParsableByteArray parent,
+      int atomType,
+      int position,
+      int size,
+      int trackId,
+      String language,
+      boolean isQuickTime,
+      @Nullable DrmInitData drmInitData,
+      StsdData out,
+      int entryIndex)
+      throws ParserException {
     parent.setPosition(position + Atom.HEADER_SIZE + StsdData.STSD_HEADER_SIZE);
 
     int quickTimeSoundDescriptionVersion = 0;
@@ -1048,6 +1165,7 @@ import java.util.List;
     int channelCount;
     int sampleRate;
     @C.PcmEncoding int pcmEncoding = Format.NO_VALUE;
+    @Nullable String codecs = null;
 
     if (quickTimeSoundDescriptionVersion == 0 || quickTimeSoundDescriptionVersion == 1) {
       channelCount = parent.readUnsignedShort();
@@ -1073,8 +1191,9 @@ import java.util.List;
 
     int childPosition = parent.getPosition();
     if (atomType == Atom.TYPE_enca) {
-      Pair<Integer, TrackEncryptionBox> sampleEntryEncryptionData = parseSampleEntryEncryptionData(
-          parent, position, size);
+      @Nullable
+      Pair<Integer, TrackEncryptionBox> sampleEntryEncryptionData =
+          parseSampleEntryEncryptionData(parent, position, size);
       if (sampleEntryEncryptionData != null) {
         atomType = sampleEntryEncryptionData.first;
         drmInitData = drmInitData == null ? null
@@ -1089,7 +1208,7 @@ import java.util.List;
     // }
 
     // If the atom type determines a MIME type, set it immediately.
-    String mimeType = null;
+    @Nullable String mimeType = null;
     if (atomType == Atom.TYPE_ac_3) {
       mimeType = MimeTypes.AUDIO_AC3;
     } else if (atomType == Atom.TYPE_ec_3) {
@@ -1130,27 +1249,30 @@ import java.util.List;
         mimeType = MimeTypes.BASE_TYPE_AUDIO + "/mhm1";
     }
 
-    byte[] initializationData = null;
+    @Nullable List<byte[]> initializationData = null;
     while (childPosition - position < size) {
       parent.setPosition(childPosition);
       int childAtomSize = parent.readInt();
-      Assertions.checkArgument(childAtomSize > 0, "childAtomSize should be positive");
+      Assertions.checkState(childAtomSize > 0, "childAtomSize should be positive");
       int childAtomType = parent.readInt();
       if (childAtomType == Atom.TYPE_esds || (isQuickTime && childAtomType == Atom.TYPE_wave)) {
         int esdsAtomPosition = childAtomType == Atom.TYPE_esds ? childPosition
             : findEsdsPosition(parent, childPosition, childAtomSize);
         if (esdsAtomPosition != C.POSITION_UNSET) {
-          Pair<String, byte[]> mimeTypeAndInitializationData =
+          Pair<@NullableType String, byte @NullableType []> mimeTypeAndInitializationData =
               parseEsdsFromParent(parent, esdsAtomPosition);
           mimeType = mimeTypeAndInitializationData.first;
-          initializationData = mimeTypeAndInitializationData.second;
-          if (MimeTypes.AUDIO_AAC.equals(mimeType)) {
-            // Update sampleRate and channelCount from the AudioSpecificConfig initialization data,
-            // which is more reliable. See [Internal: b/10903778].
-            Pair<Integer, Integer> audioSpecificConfig =
-                CodecSpecificDataUtil.parseAacAudioSpecificConfig(initializationData);
-            sampleRate = audioSpecificConfig.first;
-            channelCount = audioSpecificConfig.second;
+          @Nullable byte[] initializationDataBytes = mimeTypeAndInitializationData.second;
+          if (initializationDataBytes != null) {
+            if (MimeTypes.AUDIO_AAC.equals(mimeType)) {
+              // Update sampleRate and channelCount from the AudioSpecificConfig initialization
+              // data, which is more reliable. See [Internal: b/10903778].
+              AacUtil.Config aacConfig = AacUtil.parseAudioSpecificConfig(initializationDataBytes);
+              sampleRate = aacConfig.sampleRateHz;
+              channelCount = aacConfig.channelCount;
+              codecs = aacConfig.codecs;
+            }
+            initializationData = ImmutableList.of(initializationDataBytes);
           }
         }
       } else if (childAtomType == Atom.TYPE_dac3) {
@@ -1166,59 +1288,73 @@ import java.util.List;
         out.format =
             Ac4Util.parseAc4AnnexEFormat(parent, Integer.toString(trackId), language, drmInitData);
       } else if (childAtomType == Atom.TYPE_ddts) {
-        out.format = Format.createAudioSampleFormat(Integer.toString(trackId), mimeType, null,
-            Format.NO_VALUE, Format.NO_VALUE, channelCount, sampleRate, null, drmInitData, 0,
-            language);
+        out.format =
+            new Format.Builder()
+                .setId(trackId)
+                .setSampleMimeType(mimeType)
+                .setChannelCount(channelCount)
+                .setSampleRate(sampleRate)
+                .setDrmInitData(drmInitData)
+                .setLanguage(language)
+                .build();
       } else if (childAtomType == Atom.TYPE_dOps) {
         // Build an Opus Identification Header (defined in RFC-7845) by concatenating the Opus Magic
         // Signature and the body of the dOps atom.
         int childAtomBodySize = childAtomSize - Atom.HEADER_SIZE;
-        initializationData = new byte[opusMagic.length + childAtomBodySize];
-        System.arraycopy(opusMagic, 0, initializationData, 0, opusMagic.length);
+        byte[] headerBytes = Arrays.copyOf(opusMagic, opusMagic.length + childAtomBodySize);
         parent.setPosition(childPosition + Atom.HEADER_SIZE);
-        parent.readBytes(initializationData, opusMagic.length, childAtomBodySize);
+        parent.readBytes(headerBytes, opusMagic.length, childAtomBodySize);
+        initializationData = OpusUtil.buildInitializationData(headerBytes);
       } else if (childAtomType == Atom.TYPE_dfLa) {
         int childAtomBodySize = childAtomSize - Atom.FULL_HEADER_SIZE;
-        initializationData = new byte[4 + childAtomBodySize];
-        initializationData[0] = 0x66; // f
-        initializationData[1] = 0x4C; // L
-        initializationData[2] = 0x61; // a
-        initializationData[3] = 0x43; // C
+        byte[] initializationDataBytes = new byte[4 + childAtomBodySize];
+        initializationDataBytes[0] = 0x66; // f
+        initializationDataBytes[1] = 0x4C; // L
+        initializationDataBytes[2] = 0x61; // a
+        initializationDataBytes[3] = 0x43; // C
         parent.setPosition(childPosition + Atom.FULL_HEADER_SIZE);
-        parent.readBytes(initializationData, /* offset= */ 4, childAtomBodySize);
+        parent.readBytes(initializationDataBytes, /* offset= */ 4, childAtomBodySize);
+        initializationData = ImmutableList.of(initializationDataBytes);
       } else if (childAtomType == Atom.TYPE_alac) {
         int childAtomBodySize = childAtomSize - Atom.FULL_HEADER_SIZE;
-        initializationData = new byte[childAtomBodySize];
+        byte[] initializationDataBytes = new byte[childAtomBodySize];
         parent.setPosition(childPosition + Atom.FULL_HEADER_SIZE);
-        parent.readBytes(initializationData, /* offset= */ 0, childAtomBodySize);
+        parent.readBytes(initializationDataBytes, /* offset= */ 0, childAtomBodySize);
         // Update sampleRate and channelCount from the AudioSpecificConfig initialization data,
         // which is more reliable. See https://github.com/google/ExoPlayer/pull/6629.
         Pair<Integer, Integer> audioSpecificConfig =
-            CodecSpecificDataUtil.parseAlacAudioSpecificConfig(initializationData);
+            CodecSpecificDataUtil.parseAlacAudioSpecificConfig(initializationDataBytes);
         sampleRate = audioSpecificConfig.first;
         channelCount = audioSpecificConfig.second;
-      } else if (childAtomType == Atom.TYPE_mhac) {
-        int mhaC_header_size = 4 /* mhaC size */ + 4 /* mhaC string */ + 3 /* version */ + 2 /* config size */;
+        initializationData = ImmutableList.of(initializationDataBytes);
+      } else if (childAtomType == Atom.TYPE_mhaC) {
+        int mhaC_header_size = 4 /* mhaC size */ + 4 /* mhaC string */ + 3 /* version */ + 2 /* config size*/;
         int mhaC_size = childAtomSize - mhaC_header_size;
         if (mhaC_size > 0) {
           channelCount = 2;
           sampleRate = 48000;
-          initializationData = new byte[mhaC_size];
+          byte[] initializationDataBytes = new byte[mhaC_size];
           parent.setPosition(childPosition + mhaC_header_size);
-          parent.readBytes(initializationData, 0, mhaC_size);
+          parent.readBytes(initializationDataBytes, 0, mhaC_size);
+          initializationData = ImmutableList.of(initializationDataBytes);
+        }
       }
-      }
-
-
-
       childPosition += childAtomSize;
     }
 
     if (out.format == null && mimeType != null) {
-      out.format = Format.createAudioSampleFormat(Integer.toString(trackId), mimeType, null,
-          Format.NO_VALUE, Format.NO_VALUE, channelCount, sampleRate, pcmEncoding,
-          initializationData == null ? null : Collections.singletonList(initializationData),
-          drmInitData, 0, language);
+      out.format =
+          new Format.Builder()
+              .setId(trackId)
+              .setSampleMimeType(mimeType)
+              .setCodecs(codecs)
+              .setChannelCount(channelCount)
+              .setSampleRate(sampleRate)
+              .setPcmEncoding(pcmEncoding)
+              .setInitializationData(initializationData)
+              .setDrmInitData(drmInitData)
+              .setLanguage(language)
+              .build();
     }
   }
 
@@ -1231,7 +1367,7 @@ import java.util.List;
     while (childAtomPosition - position < size) {
       parent.setPosition(childAtomPosition);
       int childAtomSize = parent.readInt();
-      Assertions.checkArgument(childAtomSize > 0, "childAtomSize should be positive");
+      Assertions.checkState(childAtomSize > 0, "childAtomSize should be positive");
       int childType = parent.readInt();
       if (childType == Atom.TYPE_esds) {
         return childAtomPosition;
@@ -1241,12 +1377,11 @@ import java.util.List;
     return C.POSITION_UNSET;
   }
 
-  /**
-   * Returns codec-specific initialization data contained in an esds box.
-   */
-  private static Pair<String, byte[]> parseEsdsFromParent(ParsableByteArray parent, int position) {
+  /** Returns codec-specific initialization data contained in an esds box. */
+  private static Pair<@NullableType String, byte @NullableType []> parseEsdsFromParent(
+      ParsableByteArray parent, int position) {
     parent.setPosition(position + Atom.HEADER_SIZE + 4);
-    // Start of the ES_Descriptor (defined in 14496-1)
+    // Start of the ES_Descriptor (defined in ISO/IEC 14496-1)
     parent.skipBytes(1); // ES_Descriptor tag
     parseExpandableClassSize(parent);
     parent.skipBytes(2); // ES_ID
@@ -1262,13 +1397,13 @@ import java.util.List;
       parent.skipBytes(2);
     }
 
-    // Start of the DecoderConfigDescriptor (defined in 14496-1)
+    // Start of the DecoderConfigDescriptor (defined in ISO/IEC 14496-1)
     parent.skipBytes(1); // DecoderConfigDescriptor tag
     parseExpandableClassSize(parent);
 
-    // Set the MIME type based on the object type indication (14496-1 table 5).
+    // Set the MIME type based on the object type indication (ISO/IEC 14496-1 table 5).
     int objectTypeIndication = parent.readUnsignedByte();
-    String mimeType = getMimeTypeFromMp4ObjectType(objectTypeIndication);
+    @Nullable String mimeType = getMimeTypeFromMp4ObjectType(objectTypeIndication);
     if (MimeTypes.AUDIO_MPEG.equals(mimeType)
         || MimeTypes.AUDIO_DTS.equals(mimeType)
         || MimeTypes.AUDIO_DTS_HD.equals(mimeType)) {
@@ -1290,17 +1425,19 @@ import java.util.List;
    * unencrypted atom type and a {@link TrackEncryptionBox}. Null is returned if no common
    * encryption sinf atom was present.
    */
+  @Nullable
   private static Pair<Integer, TrackEncryptionBox> parseSampleEntryEncryptionData(
       ParsableByteArray parent, int position, int size) {
     int childPosition = parent.getPosition();
     while (childPosition - position < size) {
       parent.setPosition(childPosition);
       int childAtomSize = parent.readInt();
-      Assertions.checkArgument(childAtomSize > 0, "childAtomSize should be positive");
+      Assertions.checkState(childAtomSize > 0, "childAtomSize should be positive");
       int childAtomType = parent.readInt();
       if (childAtomType == Atom.TYPE_sinf) {
-        Pair<Integer, TrackEncryptionBox> result = parseCommonEncryptionSinfFromParent(parent,
-            childPosition, childAtomSize);
+        @Nullable
+        Pair<Integer, TrackEncryptionBox> result =
+            parseCommonEncryptionSinfFromParent(parent, childPosition, childAtomSize);
         if (result != null) {
           return result;
         }
@@ -1310,13 +1447,14 @@ import java.util.List;
     return null;
   }
 
+  @Nullable
   /* package */ static Pair<Integer, TrackEncryptionBox> parseCommonEncryptionSinfFromParent(
       ParsableByteArray parent, int position, int size) {
     int childPosition = position + Atom.HEADER_SIZE;
     int schemeInformationBoxPosition = C.POSITION_UNSET;
     int schemeInformationBoxSize = 0;
-    String schemeType = null;
-    Integer dataFormat = null;
+    @Nullable String schemeType = null;
+    @Nullable Integer dataFormat = null;
     while (childPosition - position < size) {
       parent.setPosition(childPosition);
       int childAtomSize = parent.readInt();
@@ -1336,20 +1474,23 @@ import java.util.List;
 
     if (C.CENC_TYPE_cenc.equals(schemeType) || C.CENC_TYPE_cbc1.equals(schemeType)
         || C.CENC_TYPE_cens.equals(schemeType) || C.CENC_TYPE_cbcs.equals(schemeType)) {
-      Assertions.checkArgument(dataFormat != null, "frma atom is mandatory");
-      Assertions.checkArgument(schemeInformationBoxPosition != C.POSITION_UNSET,
-          "schi atom is mandatory");
-      TrackEncryptionBox encryptionBox = parseSchiFromParent(parent, schemeInformationBoxPosition,
-          schemeInformationBoxSize, schemeType);
-      Assertions.checkArgument(encryptionBox != null, "tenc atom is mandatory");
+      Assertions.checkStateNotNull(dataFormat, "frma atom is mandatory");
+      Assertions.checkState(
+          schemeInformationBoxPosition != C.POSITION_UNSET, "schi atom is mandatory");
+      TrackEncryptionBox encryptionBox =
+          Assertions.checkStateNotNull(
+              parseSchiFromParent(
+                  parent, schemeInformationBoxPosition, schemeInformationBoxSize, schemeType),
+              "tenc atom is mandatory");
       return Pair.create(dataFormat, encryptionBox);
     } else {
       return null;
     }
   }
 
-  private static TrackEncryptionBox parseSchiFromParent(ParsableByteArray parent, int position,
-      int size, String schemeType) {
+  @Nullable
+  private static TrackEncryptionBox parseSchiFromParent(
+      ParsableByteArray parent, int position, int size, String schemeType) {
     int childPosition = position + Atom.HEADER_SIZE;
     while (childPosition - position < size) {
       parent.setPosition(childPosition);
@@ -1386,9 +1527,8 @@ import java.util.List;
     return null;
   }
 
-  /**
-   * Parses the proj box from sv3d box, as specified by https://github.com/google/spatial-media.
-   */
+  /** Parses the proj box from sv3d box, as specified by https://github.com/google/spatial-media. */
+  @Nullable
   private static byte[] parseProjFromParent(ParsableByteArray parent, int position, int size) {
     int childPosition = position + Atom.HEADER_SIZE;
     while (childPosition - position < size) {
@@ -1396,16 +1536,14 @@ import java.util.List;
       int childAtomSize = parent.readInt();
       int childAtomType = parent.readInt();
       if (childAtomType == Atom.TYPE_proj) {
-        return Arrays.copyOfRange(parent.data, childPosition, childPosition + childAtomSize);
+        return Arrays.copyOfRange(parent.getData(), childPosition, childPosition + childAtomSize);
       }
       childPosition += childAtomSize;
     }
     return null;
   }
 
-  /**
-   * Parses the size of an expandable class, as specified by ISO 14496-1 subsection 8.3.3.
-   */
+  /** Parses the size of an expandable class, as specified by ISO/IEC 14496-1 subsection 8.3.3. */
   private static int parseExpandableClassSize(ParsableByteArray data) {
     int currentByte = data.readUnsignedByte();
     int size = currentByte & 0x7F;
@@ -1504,10 +1642,9 @@ import java.util.List;
 
     public final TrackEncryptionBox[] trackEncryptionBoxes;
 
-    public Format format;
+    @Nullable public Format format;
     public int nalUnitLengthFieldLength;
-    @Track.Transformation
-    public int requiredSampleTransformation;
+    @Track.Transformation public int requiredSampleTransformation;
 
     public StsdData(int numberOfEntries) {
       trackEncryptionBoxes = new TrackEncryptionBox[numberOfEntries];

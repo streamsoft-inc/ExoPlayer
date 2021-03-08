@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer2.ext.mpegh;
 
+import static java.lang.Math.min;
+
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import com.google.android.exoplayer2.C;
@@ -284,25 +286,22 @@ import com.google.android.exoplayer2.util.ParsableByteArray;
 
   private MetadataUtil() {}
 
-  /**
-   * Returns a {@link Format} that is the same as the input format but includes information from the
-   * specified sources of metadata.
-   */
-  public static Format getFormatWithMetadata(
+  /** Updates a {@link Format.Builder} to include metadata from the provided sources. */
+  public static void setFormatMetadata(
       int trackType,
-      Format format,
       @Nullable Metadata udtaMetadata,
       @Nullable Metadata mdtaMetadata,
-      GaplessInfoHolder gaplessInfoHolder) {
+      GaplessInfoHolder gaplessInfoHolder,
+      Format.Builder formatBuilder) {
     if (trackType == C.TRACK_TYPE_AUDIO) {
       if (gaplessInfoHolder.hasGaplessInfo()) {
-        format =
-            format.copyWithGaplessInfo(
-                gaplessInfoHolder.encoderDelay, gaplessInfoHolder.encoderPadding);
+        formatBuilder
+            .setEncoderDelay(gaplessInfoHolder.encoderDelay)
+            .setEncoderPadding(gaplessInfoHolder.encoderPadding);
       }
       // We assume all udta metadata is associated with the audio track.
       if (udtaMetadata != null) {
-        format = format.copyWithMetadata(udtaMetadata);
+        formatBuilder.setMetadata(udtaMetadata);
       }
     } else if (trackType == C.TRACK_TYPE_VIDEO && mdtaMetadata != null) {
       // Populate only metadata keys that are known to be specific to video.
@@ -311,12 +310,11 @@ import com.google.android.exoplayer2.util.ParsableByteArray;
         if (entry instanceof MdtaMetadataEntry) {
           MdtaMetadataEntry mdtaMetadataEntry = (MdtaMetadataEntry) entry;
           if (MDTA_KEY_ANDROID_CAPTURE_FPS.equals(mdtaMetadataEntry.key)) {
-            format = format.copyWithMetadata(new Metadata(mdtaMetadataEntry));
+            formatBuilder.setMetadata(new Metadata(mdtaMetadataEntry));
           }
         }
       }
     }
-    return format;
   }
 
   /**
@@ -464,7 +462,7 @@ import com.google.android.exoplayer2.util.ParsableByteArray;
       boolean isBoolean) {
     int value = parseUint8AttributeValue(data);
     if (isBoolean) {
-      value = Math.min(1, value);
+      value = min(1, value);
     }
     if (value >= 0) {
       return isTextInformationFrame
@@ -499,8 +497,11 @@ import com.google.android.exoplayer2.util.ParsableByteArray;
   @Nullable
   private static TextInformationFrame parseStandardGenreAttribute(ParsableByteArray data) {
     int genreCode = parseUint8AttributeValue(data);
-    String genreString = (0 < genreCode && genreCode <= STANDARD_GENRES.length)
-        ? STANDARD_GENRES[genreCode - 1] : null;
+    @Nullable
+    String genreString =
+        (0 < genreCode && genreCode <= STANDARD_GENRES.length)
+            ? STANDARD_GENRES[genreCode - 1]
+            : null;
     if (genreString != null) {
       return new TextInformationFrame("TCON", /* description= */ null, genreString);
     }
@@ -515,7 +516,7 @@ import com.google.android.exoplayer2.util.ParsableByteArray;
     if (atomType == Atom.TYPE_data) {
       int fullVersionInt = data.readInt();
       int flags = Atom.parseFullAtomFlags(fullVersionInt);
-      String mimeType = flags == 13 ? "image/jpeg" : flags == 14 ? "image/png" : null;
+      @Nullable String mimeType = flags == 13 ? "image/jpeg" : flags == 14 ? "image/png" : null;
       if (mimeType == null) {
         Log.w(TAG, "Unrecognized cover art flags: " + flags);
         return null;
@@ -535,8 +536,8 @@ import com.google.android.exoplayer2.util.ParsableByteArray;
 
   @Nullable
   private static Id3Frame parseInternalAttribute(ParsableByteArray data, int endPosition) {
-    String domain = null;
-    String name = null;
+    @Nullable String domain = null;
+    @Nullable String name = null;
     int dataAtomPosition = -1;
     int dataAtomSize = -1;
     while (data.getPosition() < endPosition) {
