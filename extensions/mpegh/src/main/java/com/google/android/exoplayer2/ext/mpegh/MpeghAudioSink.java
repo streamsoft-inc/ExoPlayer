@@ -45,6 +45,8 @@ import com.google.android.exoplayer2.audio.AudioTrackPositionTracker;
 import com.google.android.exoplayer2.audio.AuxEffectInfo;
 import com.google.android.exoplayer2.audio.DtsUtil;
 import com.google.android.exoplayer2.audio.MpegAudioUtil;
+import com.google.android.exoplayer2.audio.MpeghAudioTrackPositionTracker;
+import com.google.android.exoplayer2.audio.MpeghTrimmingAudioProcessor;
 import com.google.android.exoplayer2.audio.TrimmingAudioProcessor;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Log;
@@ -271,11 +273,11 @@ public final class MpeghAudioSink implements AudioSink {
 
   private final AudioProcessorChain audioProcessorChain;
   private final boolean enableFloatOutput;
-  private final TrimmingAudioProcessor trimmingAudioProcessor;
+  private final MpeghTrimmingAudioProcessor trimmingAudioProcessor;
   private final VirtualizerAudioProcessor virtualizerProcessor;
   private final AudioProcessor[] toIntPcmAvailableAudioProcessors;
   private final ConditionVariable releasingConditionVariable;
-  private final AudioTrackPositionTracker audioTrackPositionTracker;
+  private final MpeghAudioTrackPositionTracker audioTrackPositionTracker;
   private final ArrayDeque<MediaPositionParameters> mediaPositionParametersCheckpoints;
   private final boolean enableAudioTrackPlaybackParams;
   private final boolean enableOffload;
@@ -353,8 +355,8 @@ public final class MpeghAudioSink implements AudioSink {
     this.enableAudioTrackPlaybackParams = Util.SDK_INT >= 23 && enableAudioTrackPlaybackParams;
     this.enableOffload = Util.SDK_INT >= 29 && enableOffload;
     releasingConditionVariable = new ConditionVariable(true);
-    audioTrackPositionTracker = new AudioTrackPositionTracker(new PositionTrackerListener());
-    trimmingAudioProcessor = new TrimmingAudioProcessor();
+    audioTrackPositionTracker = new MpeghAudioTrackPositionTracker(new PositionTrackerListener());
+    trimmingAudioProcessor = new MpeghTrimmingAudioProcessor();
     virtualizerProcessor = new VirtualizerAudioProcessor(appRootPath);
     AudioProcessor alcProcessor = new AlcAudioProcessor();
     ArrayList<AudioProcessor> toIntPcmAudioProcessors = new ArrayList<>();
@@ -1696,7 +1698,7 @@ public final class MpeghAudioSink implements AudioSink {
         .build();
   }
 
-  private final class PositionTrackerListener implements AudioTrackPositionTracker.Listener {
+  private final class PositionTrackerListener implements MpeghAudioTrackPositionTracker.Listener {
 
     @Override
     public void onPositionFramesMismatch(
