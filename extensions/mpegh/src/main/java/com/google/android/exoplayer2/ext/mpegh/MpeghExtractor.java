@@ -155,16 +155,38 @@ public final class MpeghExtractor implements Extractor, SeekMap {
      if( snif ) {
         // ok this is mp4 format, let's check do we have needed Sony atoms?
         // 1. find stbl atom, and make sure it contains mha1 with mhaC
-         input.resetPeekPosition();
+       input.resetPeekPosition();
+
+       long inputLength = input.getLength();
+       int bytesToSearch = (int) (inputLength == C.LENGTH_UNSET || inputLength > SEARCH_LENGTH
+           ? SEARCH_LENGTH : inputLength);
+
+
          int bytesSearched = 0;
-         Boolean stblFound = false, mha1Found = false, mhacFound = false, mhm1Found = false;
+         boolean stblFound = false, mha1Found = false, mhacFound = false, mhm1Found = false;
+         boolean moovFound = false;
+
          ParsableByteArray buffer = new ParsableByteArray(64);
-         while (bytesSearched < SEARCH_LENGTH)
-         {
+
+         while (bytesSearched < bytesToSearch) {
              buffer.reset(Atom.HEADER_SIZE);
              input.peekFully(buffer.data, 0, Atom.HEADER_SIZE);
+             long atomSize = buffer.readUnsignedInt();
              int atomType = buffer.readInt();
-             if (!stblFound && atomType == Atom.TYPE_stbl) {
+             if (!moovFound && atomType == Atom.TYPE_moov) {
+
+               moovFound = true;
+               bytesToSearch += (int) atomSize; //adding moov atom's size
+               if (inputLength != C.LENGTH_UNSET && bytesToSearch > inputLength) {
+                 // Make sure we don't exceed the file size.
+                 bytesToSearch = (int) inputLength;
+               }
+             }
+             if (atomType == Atom.TYPE_mdat) {
+               break;
+             }
+
+             if (moovFound && !stblFound && atomType == Atom.TYPE_stbl) {
                  stblFound = true;
              }
              else if(stblFound && !mha1Found && atomType == Atom.TYPE_mha1) {
@@ -186,6 +208,7 @@ public final class MpeghExtractor implements Extractor, SeekMap {
 
          snif = mhacFound;
      }
+    System.out.println("Sniff result: " + snif);
      return snif;
   }
 
