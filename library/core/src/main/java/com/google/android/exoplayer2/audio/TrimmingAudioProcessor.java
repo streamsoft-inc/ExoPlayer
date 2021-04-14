@@ -18,15 +18,13 @@ package com.google.android.exoplayer2.audio;
 import static java.lang.Math.min;
 
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 import java.nio.ByteBuffer;
 
 /** Audio processor for trimming samples from the start/end of data. */
-/* package */ final public class TrimmingAudioProcessor extends BaseAudioProcessor {
+/* package */ final class TrimmingAudioProcessor extends BaseAudioProcessor {
 
   @C.PcmEncoding private static final int OUTPUT_ENCODING = C.ENCODING_PCM_16BIT;
-  @C.PcmEncoding private static final int OUTPUT_ENCODING_FLOAT = C.ENCODING_PCM_FLOAT;
 
   private int trimStartFrames;
   private int trimEndFrames;
@@ -54,7 +52,6 @@ import java.nio.ByteBuffer;
   public void setTrimFrameCount(int trimStartFrames, int trimEndFrames) {
     this.trimStartFrames = trimStartFrames;
     this.trimEndFrames = trimEndFrames;
-    Log.d("TrimmingProceser", "Encoder Delay : " + trimStartFrames + " / End Padding : " + trimEndFrames);
   }
 
   /** Sets the trimmed frame count returned by {@link #getTrimmedFrameCount()} to zero. */
@@ -73,7 +70,7 @@ import java.nio.ByteBuffer;
   @Override
   public AudioFormat onConfigure(AudioFormat inputAudioFormat)
       throws UnhandledAudioFormatException {
-    if ((inputAudioFormat.encoding != OUTPUT_ENCODING) && (inputAudioFormat.encoding != OUTPUT_ENCODING_FLOAT)) {
+    if (inputAudioFormat.encoding != OUTPUT_ENCODING) {
       throw new UnhandledAudioFormatException(inputAudioFormat);
     }
     reconfigurationPending = true;

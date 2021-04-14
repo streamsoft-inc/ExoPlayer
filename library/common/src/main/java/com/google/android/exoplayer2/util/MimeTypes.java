@@ -32,6 +32,7 @@ public final class MimeTypes {
   public static final String BASE_TYPE_VIDEO = "video";
   public static final String BASE_TYPE_AUDIO = "audio";
   public static final String BASE_TYPE_TEXT = "text";
+  public static final String BASE_TYPE_IMAGE = "image";
   public static final String BASE_TYPE_APPLICATION = "application";
 
   public static final String VIDEO_MP4 = BASE_TYPE_VIDEO + "/mp4";
@@ -84,8 +85,6 @@ public final class MimeTypes {
   public static final String AUDIO_OGG = BASE_TYPE_AUDIO + "/ogg";
   public static final String AUDIO_WAV = BASE_TYPE_AUDIO + "/wav";
   public static final String AUDIO_UNKNOWN = BASE_TYPE_AUDIO + "/x-unknown";
-  public static final String AUDIO_MPEGH_MHA1 = BASE_TYPE_AUDIO + "/mha1";
-  public static final String AUDIO_MPEGH_MHM1 = BASE_TYPE_AUDIO + "/mhm1";
 
   public static final String TEXT_VTT = BASE_TYPE_TEXT + "/vtt";
   public static final String TEXT_SSA = BASE_TYPE_TEXT + "/x-ssa";
@@ -114,6 +113,8 @@ public final class MimeTypes {
   public static final String APPLICATION_EXIF = BASE_TYPE_APPLICATION + "/x-exif";
   public static final String APPLICATION_ICY = BASE_TYPE_APPLICATION + "/x-icy";
   public static final String APPLICATION_AIT = BASE_TYPE_APPLICATION + "/vnd.dvb.ait";
+
+  public static final String IMAGE_JPEG = BASE_TYPE_IMAGE + "/jpeg";
 
   private static final ArrayList<CustomMimeType> customMimeTypes = new ArrayList<>();
 
@@ -242,6 +243,50 @@ public final class MimeTypes {
   }
 
   /**
+   * Returns whether the given {@code codecs} string contains a codec which corresponds to the given
+   * {@code mimeType}.
+   *
+   * @param codecs An RFC 6381 codecs string.
+   * @param mimeType A MIME type to look for.
+   * @return Whether the given {@code codecs} string contains a codec which corresponds to the given
+   *     {@code mimeType}.
+   */
+  public static boolean containsCodecsCorrespondingToMimeType(
+      @Nullable String codecs, String mimeType) {
+    return getCodecsCorrespondingToMimeType(codecs, mimeType) != null;
+  }
+
+  /**
+   * Returns a subsequence of {@code codecs} containing the codec strings that correspond to the
+   * given {@code mimeType}. Returns null if {@code mimeType} is null, {@code codecs} is null, or
+   * {@code codecs} does not contain a codec that corresponds to {@code mimeType}.
+   *
+   * @param codecs An RFC 6381 codecs string.
+   * @param mimeType A MIME type to look for.
+   * @return A subsequence of {@code codecs} containing the codec strings that correspond to the
+   *     given {@code mimeType}. Returns null if {@code mimeType} is null, {@code codecs} is null,
+   *     or {@code codecs} does not contain a codec that corresponds to {@code mimeType}.
+   */
+  @Nullable
+  public static String getCodecsCorrespondingToMimeType(
+      @Nullable String codecs, @Nullable String mimeType) {
+    if (codecs == null || mimeType == null) {
+      return null;
+    }
+    String[] codecList = Util.splitCodecs(codecs);
+    StringBuilder builder = new StringBuilder();
+    for (String codec : codecList) {
+      if (mimeType.equals(getMediaMimeType(codec))) {
+        if (builder.length() > 0) {
+          builder.append(",");
+        }
+        builder.append(codec);
+      }
+    }
+    return builder.length() > 0 ? builder.toString() : null;
+  }
+
+  /**
    * Returns the first audio MIME type derived from an RFC 6381 codecs string.
    *
    * @param codecs An RFC 6381 codecs string.
@@ -346,10 +391,6 @@ public final class MimeTypes {
       return MimeTypes.APPLICATION_CEA708;
     } else if (codec.contains("eia608") || codec.contains("cea608")) {
       return MimeTypes.APPLICATION_CEA608;
-    } else if (codec.startsWith("mha1")) {
-      return MimeTypes.AUDIO_MPEGH_MHA1;
-    } else if (codec.startsWith("mhm1")) {
-      return MimeTypes.AUDIO_MPEGH_MHM1;
     } else {
       return getCustomMimeTypeForCodec(codec);
     }
