@@ -180,6 +180,7 @@ public final class MpeghExtractor implements Extractor, SeekMap {
          while (bytesSearched < bytesToSearch) {
              buffer.reset(Atom.HEADER_SIZE);
              input.peekFully(buffer.getData(), 0, Atom.HEADER_SIZE);
+             long atomSize = buffer.readUnsignedInt();
              int atomType = buffer.readInt();
              if (!moovFound && atomType == Atom.TYPE_moov) {
 
