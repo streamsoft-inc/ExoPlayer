@@ -55,6 +55,9 @@ public final class MimeTypes {
   public static final String VIDEO_DOLBY_VISION = BASE_TYPE_VIDEO + "/dolby-vision";
   public static final String VIDEO_OGG = BASE_TYPE_VIDEO + "/ogg";
   public static final String VIDEO_UNKNOWN = BASE_TYPE_VIDEO + "/x-unknown";
+  public static final String AUDIO_MPEGH_MHA1 = BASE_TYPE_AUDIO + "/mha1";
+  public static final String AUDIO_MPEGH_MHM1 = BASE_TYPE_AUDIO + "/mhm1";
+
 
   public static final String AUDIO_MP4 = BASE_TYPE_AUDIO + "/mp4";
   public static final String AUDIO_AAC = BASE_TYPE_AUDIO + "/mp4a-latm";
@@ -391,6 +394,10 @@ public final class MimeTypes {
       return MimeTypes.APPLICATION_CEA708;
     } else if (codec.contains("eia608") || codec.contains("cea608")) {
       return MimeTypes.APPLICATION_CEA608;
+    } else if (codec.startsWith("mha1")) {
+      return MimeTypes.AUDIO_MPEGH_MHA1;
+    } else if (codec.startsWith("mhm1")) {
+      return MimeTypes.AUDIO_MPEGH_MHM1;
     } else {
       return getCustomMimeTypeForCodec(codec);
     }

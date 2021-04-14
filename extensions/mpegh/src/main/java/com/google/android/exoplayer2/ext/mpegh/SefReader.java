@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.google.android.exoplayer2.extractor.mp4;
+package com.google.android.exoplayer2.ext.mpegh;
 
 import static com.google.android.exoplayer2.extractor.Extractor.RESULT_SEEK;
 

@@ -41,13 +41,11 @@ import com.google.android.exoplayer2.audio.AudioCapabilities;
 import com.google.android.exoplayer2.audio.AudioProcessor;
 import com.google.android.exoplayer2.audio.AudioProcessor.UnhandledAudioFormatException;
 import com.google.android.exoplayer2.audio.AudioSink;
-import com.google.android.exoplayer2.audio.AudioTrackPositionTracker;
 import com.google.android.exoplayer2.audio.AuxEffectInfo;
 import com.google.android.exoplayer2.audio.DtsUtil;
 import com.google.android.exoplayer2.audio.MpegAudioUtil;
 import com.google.android.exoplayer2.audio.MpeghAudioTrackPositionTracker;
 import com.google.android.exoplayer2.audio.MpeghTrimmingAudioProcessor;
-import com.google.android.exoplayer2.audio.TrimmingAudioProcessor;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.MimeTypes;
@@ -477,7 +475,7 @@ public final class MpeghAudioSink implements AudioSink {
             outputFormat = nextFormat;
           }
         } catch (UnhandledAudioFormatException e) {
-          throw new ConfigurationException(e);
+          throw new ConfigurationException(e, inputFormat);
         }
       }
 
@@ -504,7 +502,7 @@ public final class MpeghAudioSink implements AudioSink {
         Pair<Integer, Integer> encodingAndChannelConfig =
             getEncodingAndChannelConfigForPassthrough(inputFormat, null);
         if (encodingAndChannelConfig == null) {
-          throw new ConfigurationException("Unable to configure passthrough for: " + inputFormat);
+          throw new ConfigurationException("Unable to configure passthrough for: " + inputFormat, inputFormat);
         }
         outputEncoding = encodingAndChannelConfig.first;
         outputChannelConfig = encodingAndChannelConfig.second;
@@ -513,11 +511,11 @@ public final class MpeghAudioSink implements AudioSink {
 
     if (outputEncoding == C.ENCODING_INVALID) {
       throw new ConfigurationException(
-          "Invalid output encoding (mode=" + outputMode + ") for: " + inputFormat);
+          "Invalid output encoding (mode=" + outputMode + ") for: " + inputFormat, inputFormat);
     }
     if (outputChannelConfig == AudioFormat.CHANNEL_INVALID) {
       throw new ConfigurationException(
-          "Invalid output channel config (mode=" + outputMode + ") for: " + inputFormat);
+          "Invalid output channel config (mode=" + outputMode + ") for: " + inputFormat, inputFormat);
     }
 
     offloadDisabledUntilNextConfiguration = false;
@@ -591,35 +589,15 @@ public final class MpeghAudioSink implements AudioSink {
     if (isOffloadedPlayback(audioTrack)) {
       registerStreamEventCallbackV29(audioTrack);
       audioTrack.setOffloadDelayPadding(
-          configuration.inputFormat.encoderDelay, configuration.inputFormat.encoderPadding);
+              configuration.inputFormat.encoderDelay, configuration.inputFormat.encoderPadding);
     }
-    int audioSessionId = audioTrack.getAudioSessionId();
-    if (enablePreV21AudioSessionWorkaround) {
-      if (Util.SDK_INT < 21) {
-        // The workaround creates an audio track with a two byte buffer on the same session, and
-        // does not release it until this object is released, which keeps the session active.
-        if (keepSessionIdAudioTrack != null
-            && audioSessionId != keepSessionIdAudioTrack.getAudioSessionId()) {
-          releaseKeepSessionIdAudioTrack();
-        }
-        if (keepSessionIdAudioTrack == null) {
-          keepSessionIdAudioTrack = initializeKeepSessionIdAudioTrack(audioSessionId);
-        }
-      }
-    }
-    if (this.audioSessionId != audioSessionId) {
-      this.audioSessionId = audioSessionId;
-      if (listener != null) {
-        listener.onAudioSessionId(audioSessionId);
-      }
-    }
-
+    audioSessionId = audioTrack.getAudioSessionId();
     audioTrackPositionTracker.setAudioTrack(
-        audioTrack,
-        /* isPassthrough= */ configuration.outputMode == OUTPUT_MODE_PASSTHROUGH,
-        configuration.outputEncoding,
-        configuration.outputPcmFrameSize,
-        configuration.bufferSize);
+            audioTrack,
+            /* isPassthrough= */ configuration.outputMode == OUTPUT_MODE_PASSTHROUGH,
+            configuration.outputEncoding,
+            configuration.outputPcmFrameSize,
+            configuration.bufferSize);
     setVolumeInternal();
 
     if (auxEffectInfo.effectId != AuxEffectInfo.NO_AUX_EFFECT_ID) {
@@ -890,7 +868,7 @@ public final class MpeghAudioSink implements AudioSink {
       if (isRecoverable) {
         maybeDisableOffload();
       }
-      throw new WriteException(bytesWritten);
+      throw new WriteException( bytesWritten, configuration.inputFormat, isRecoverable);
     }
 
     if (playing
@@ -1051,14 +1029,14 @@ public final class MpeghAudioSink implements AudioSink {
   }
 
   @Override
-  public void enableTunnelingV21(int tunnelingAudioSessionId) {
+  public void enableTunnelingV21() {
     Assertions.checkState(Util.SDK_INT >= 21);
-    if (!tunneling || audioSessionId != tunnelingAudioSessionId) {
+    if (!tunneling) {
       tunneling = true;
-      audioSessionId = tunnelingAudioSessionId;
       flush();
     }
   }
+
 
   @Override
   public void disableTunneling() {
@@ -1840,7 +1818,7 @@ public final class MpeghAudioSink implements AudioSink {
         audioTrack = createAudioTrack(tunneling, audioAttributes, audioSessionId);
       } catch (UnsupportedOperationException e) {
         throw new InitializationException(
-            AudioTrack.STATE_UNINITIALIZED, outputSampleRate, outputChannelConfig, bufferSize);
+            AudioTrack.STATE_UNINITIALIZED, outputSampleRate, outputChannelConfig, bufferSize, inputFormat,  outputModeIsOffload(), e);
       }
 
       int state = audioTrack.getState();
@@ -1851,7 +1829,9 @@ public final class MpeghAudioSink implements AudioSink {
           // The track has already failed to initialize, so it wouldn't be that surprising if
           // release were to fail too. Swallow the exception.
         }
-        throw new InitializationException(state, outputSampleRate, outputChannelConfig, bufferSize);
+
+
+        throw new InitializationException(state, outputSampleRate, outputChannelConfig, bufferSize, inputFormat, outputModeIsOffload(), null);
       }
       return audioTrack;
     }
