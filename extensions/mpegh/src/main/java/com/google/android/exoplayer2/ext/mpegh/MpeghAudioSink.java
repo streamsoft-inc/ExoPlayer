@@ -51,6 +51,7 @@ import com.google.android.exoplayer2.audio.TrimmingAudioProcessor;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.MimeTypes;
+import com.google.android.exoplayer2.util.MpeghUtil;
 import com.google.android.exoplayer2.util.Util;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
@@ -484,7 +485,7 @@ public final class MpeghAudioSink implements AudioSink {
       outputMode = OUTPUT_MODE_PCM;
       outputEncoding = outputFormat.encoding;
       outputSampleRate = outputFormat.sampleRate;
-      outputChannelConfig = Util.getAudioTrackChannelConfig(outputFormat.channelCount);
+      outputChannelConfig = MpeghUtil.getAudioTrackChannelConfig(outputFormat.channelCount);
       outputPcmFrameSize = Util.getPcmFrameSize(outputEncoding, outputFormat.channelCount);
     } else {
       inputPcmFrameSize = C.LENGTH_UNSET;
@@ -497,7 +498,7 @@ public final class MpeghAudioSink implements AudioSink {
         outputEncoding =
             MimeTypes.getEncoding(
                 Assertions.checkNotNull(inputFormat.sampleMimeType), inputFormat.codecs);
-        outputChannelConfig = Util.getAudioTrackChannelConfig(inputFormat.channelCount);
+        outputChannelConfig = MpeghUtil.getAudioTrackChannelConfig(inputFormat.channelCount);
       } else {
         outputMode = OUTPUT_MODE_PASSTHROUGH;
         @Nullable
@@ -1433,7 +1434,7 @@ public final class MpeghAudioSink implements AudioSink {
       channelCount = 2;
     }
 
-    return Util.getAudioTrackChannelConfig(channelCount);
+    return MpeghUtil.getAudioTrackChannelConfig(channelCount);
   }
 
   private static boolean isOffloadedPlaybackSupported(
@@ -1447,7 +1448,7 @@ public final class MpeghAudioSink implements AudioSink {
     if (encoding == C.ENCODING_INVALID) {
       return false;
     }
-    int channelConfig = Util.getAudioTrackChannelConfig(format.channelCount);
+    int channelConfig = MpeghUtil.getAudioTrackChannelConfig(format.channelCount);
     if (channelConfig == AudioFormat.CHANNEL_INVALID) {
       return false;
     }
